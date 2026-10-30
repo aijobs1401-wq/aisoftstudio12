@@ -1881,6 +1881,46 @@ function MasterAdminConsole({ adminData, user, onExit, onRefresh }: any) {
   const [section, setSection] = useState('overview');
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [newPlan, setNewPlan] = useState({ name: '', price: '999', botsLimit: '1', messagesLimit: '1000', apiLimit: '500' });
+  const [savingPlan, setSavingPlan] = useState(false);
+
+  const updateAdminRecord = async (path: string, payload: any) => {
+    try {
+      const response = await authenticatedFetch(`/api/admin/${path}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Admin update failed.');
+      await onRefresh?.();
+    } catch (error: any) {
+      alert(error.message || 'Admin update failed.');
+    }
+  };
+
+  const createPlan = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSavingPlan(true);
+    try {
+      const response = await authenticatedFetch('/api/admin/plans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newPlan.name, price: Number(newPlan.price), botsLimit: Number(newPlan.botsLimit),
+          messagesLimit: Number(newPlan.messagesLimit), apiLimit: Number(newPlan.apiLimit),
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || 'Could not create plan.');
+      setNewPlan({ name: '', price: '999', botsLimit: '1', messagesLimit: '1000', apiLimit: '500' });
+      await onRefresh?.();
+    } catch (error: any) {
+      alert(error.message || 'Could not create plan.');
+    } finally {
+      setSavingPlan(false);
+    }
+  };
 
   const sections = [
     { id: 'overview', label: 'Command Overview', icon: <LayoutDashboard className="h-4 w-4" />, group: 'PLATFORM' },
@@ -1933,6 +1973,7 @@ function MasterAdminConsole({ adminData, user, onExit, onRefresh }: any) {
                   const keys: any = {
                     'Account / Name': item.name || item.full_name || item.email || item.id,
                     'Email': item.email || '—',
+                    'Role': item.role || '—',
                     'Workspace': item.name || item.workspaceName || item.id,
                     'Plan': item.plan || item.planName || '—',
                     'Status': item.status || item.state || '—',
@@ -2014,10 +2055,29 @@ function MasterAdminConsole({ adminData, user, onExit, onRefresh }: any) {
             <section className="rounded-2xl border border-orange-400/15 bg-gradient-to-r from-orange-400/[.08] to-transparent p-5"><div className="flex items-start gap-3"><ShieldAlert className="mt-0.5 h-5 w-5 text-orange-300"/><div><h3 className="text-sm font-semibold text-white">Owner-level control</h3><p className="mt-1 max-w-3xl text-xs leading-6 text-zinc-400">Use this console to supervise customer accounts, workspaces, channel connections, plans, payments and AI operations. Sensitive Meta credentials and provider tokens must remain server-side and must never be displayed in this dashboard.</p></div></div></section>
           </>}
 
-          {section === 'customers' && <><div><h2 className="text-lg font-semibold text-white">Customer accounts</h2><p className="mt-1 text-xs text-zinc-500">Platform-wide account directory.</p></div><Table columns={['Account / Name','Email','Status','Created']} data={filtered(rows('users'))} empty="No customer account records returned by the admin API."/></>}
-          {section === 'workspaces' && <><div><h2 className="text-lg font-semibold text-white">Workspace registry</h2><p className="mt-1 text-xs text-zinc-500">Tenant inventory and subscription assignment.</p></div><Table columns={['Workspace','Plan','Status','Created']} data={filtered(rows('workspaces'))} empty="No workspace records returned by the admin API."/></>}
+          {section === 'customers' && <>
+            <div><h2 className="text-lg font-semibold text-white">Customer accounts</h2><p className="mt-1 text-xs text-zinc-500">Platform-wide account directory. Change account roles from this owner-only console.</p></div>
+            <Table columns={['Account / Name','Email','Role','Status','Created']} data={filtered(rows('users'))} empty="No customer account records returned by the admin API."/>
+            <div className="space-y-2">{filtered(rows('users')).map((account: any) => <div key={account.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#15191f] p-4"><div><div className="text-xs font-semibold text-white">{account.name || account.email}</div><div className="mt-1 text-[10px] text-zinc-500">{account.email}</div></div><div className="flex items-center gap-2"><span className="text-[10px] text-zinc-500">Access role</span><select value={account.role || 'viewer'} onChange={(e) => updateAdminRecord(`users/${account.id}`, { role: e.target.value })} className="rounded-lg border border-white/10 bg-[#0c0f13] px-3 py-2 text-xs text-zinc-200"><option value="viewer">Viewer</option><option value="editor">Editor</option><option value="admin">Admin</option></select></div></div>)}</div>
+          </>}
+          {section === 'workspaces' && <>
+            <div><h2 className="text-lg font-semibold text-white">Workspace registry</h2><p className="mt-1 text-xs text-zinc-500">Tenant inventory, plan assignment and workspace access controls.</p></div>
+            <Table columns={['Workspace','Plan','Status','Created']} data={filtered(rows('workspaces'))} empty="No workspace records returned by the admin API."/>
+            <div className="space-y-2">{filtered(rows('workspaces')).map((workspace: any) => <div key={workspace.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#15191f] p-4"><div><div className="text-xs font-semibold text-white">{workspace.name}</div><div className="mt-1 text-[10px] text-zinc-500">{workspace.plan || 'Starter'} · {workspace.status}</div></div><button onClick={() => updateAdminRecord(`workspaces/${workspace.id}`, { status: workspace.status === 'active' ? 'suspended' : 'active' })} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-zinc-300 hover:border-orange-400/30 hover:text-white">{workspace.status === 'active' ? 'Suspend workspace' : 'Activate workspace'}</button></div>)}</div>
+          </>}
           {section === 'integrations' && <><div><h2 className="text-lg font-semibold text-white">Channel integration control</h2><p className="mt-1 text-xs text-zinc-500">Review customer channel connections. Provider configuration is managed securely on the backend.</p></div><div className="grid gap-4 md:grid-cols-3">{[{name:'WhatsApp Cloud API',icon:<Smartphone className="h-5 w-5"/>,provider:'whatsapp'},{name:'Instagram Messaging',icon:<Instagram className="h-5 w-5"/>,provider:'instagram'},{name:'Facebook Messenger',icon:<Facebook className="h-5 w-5"/>,provider:'messenger'}].map((channel)=><div key={channel.provider} className="rounded-2xl border border-white/10 bg-[#15191f] p-5"><div className="flex items-center justify-between"><span className="rounded-xl bg-orange-400/10 p-3 text-orange-200">{channel.icon}</span><span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">Connection records</span></div><h3 className="mt-4 text-sm font-semibold text-white">{channel.name}</h3><p className="mt-1 text-xs text-zinc-500">Customer accounts detected: {rows('channels').filter((item:any)=>(item.provider || item.channel || '').toLowerCase().includes(channel.provider)).length}</p></div>)}</div><Table columns={['Channel','Account ID','Status','Created']} data={filtered(rows('channels'))} empty="No connected channel records were returned. No provider is being reported as live without verified data."/></>}
-          {section === 'plans' && <><div><h2 className="text-lg font-semibold text-white">Plans & entitlements</h2><p className="mt-1 text-xs text-zinc-500">Current plan catalogue from platform storage.</p></div><Table columns={['Account / Name','Amount','Status','Created']} data={filtered(rows('plans'))} empty="No plan records returned by the admin API."/></>}
+          {section === 'plans' && <>
+            <div><h2 className="text-lg font-semibold text-white">Plans & entitlements</h2><p className="mt-1 text-xs text-zinc-500">Create packages and switch plan availability for customer checkout.</p></div>
+            <form onSubmit={createPlan} className="grid gap-3 rounded-2xl border border-white/10 bg-[#15191f] p-5 sm:grid-cols-2 xl:grid-cols-5">
+              <input required placeholder="Plan name" value={newPlan.name} onChange={e => setNewPlan({ ...newPlan, name: e.target.value })} className="rounded-lg border border-white/10 bg-[#0c0f13] px-3 py-2 text-xs text-white"/>
+              <input required type="number" min="0" placeholder="Monthly price (INR)" value={newPlan.price} onChange={e => setNewPlan({ ...newPlan, price: e.target.value })} className="rounded-lg border border-white/10 bg-[#0c0f13] px-3 py-2 text-xs text-white"/>
+              <input required type="number" min="1" placeholder="Bots limit" value={newPlan.botsLimit} onChange={e => setNewPlan({ ...newPlan, botsLimit: e.target.value })} className="rounded-lg border border-white/10 bg-[#0c0f13] px-3 py-2 text-xs text-white"/>
+              <input required type="number" min="1" placeholder="Messages limit" value={newPlan.messagesLimit} onChange={e => setNewPlan({ ...newPlan, messagesLimit: e.target.value })} className="rounded-lg border border-white/10 bg-[#0c0f13] px-3 py-2 text-xs text-white"/>
+              <button disabled={savingPlan} className="rounded-lg bg-orange-600 px-4 py-2 text-xs font-bold text-white hover:bg-orange-500 disabled:opacity-50">{savingPlan ? 'Creating…' : 'Create plan'}</button>
+            </form>
+            <Table columns={['Account / Name','Amount','Status','Created']} data={filtered(rows('plans'))} empty="No plan records returned by the admin API."/>
+            <div className="space-y-2">{filtered(rows('plans')).map((plan: any) => <div key={plan.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#15191f] p-4"><div><div className="text-xs font-semibold text-white">{plan.name}</div><div className="mt-1 text-[10px] text-zinc-500">₹{plan.amount} · {plan.status}</div></div><button onClick={() => updateAdminRecord(`plans/${plan.id}`, { isActive: plan.status !== 'active' })} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-zinc-300 hover:border-orange-400/30 hover:text-white">{plan.status === 'active' ? 'Disable plan' : 'Enable plan'}</button></div>)}</div>
+          </>}
           {section === 'payments' && <><div><h2 className="text-lg font-semibold text-white">Payments & revenue records</h2><p className="mt-1 text-xs text-zinc-500">Payment records currently available to the admin API.</p></div><Table columns={['Account / Name','Amount','Status','Created']} data={filtered(rows('payments'))} empty="No payment records returned by the admin API."/></>}
           {section === 'bots' && <><div><h2 className="text-lg font-semibold text-white">AI assistant fleet</h2><p className="mt-1 text-xs text-zinc-500">Bots deployed across customer workspaces.</p></div><Table columns={['Bot','Model','Status','Created']} data={filtered(rows('bots'))} empty="No AI bot records returned by the admin API."/></>}
           {section === 'monitoring' && <><div><h2 className="text-lg font-semibold text-white">System activity & audit trail</h2><p className="mt-1 text-xs text-zinc-500">Administrative and operational events.</p></div><Table columns={['Event','Status','Created']} data={filtered(rows('logs'))} empty="No system log records returned by the admin API."/></>}
