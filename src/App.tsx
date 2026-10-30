@@ -1884,6 +1884,35 @@ function MasterAdminConsole({ adminData, user, onExit, onRefresh }: any) {
   const [refreshing, setRefreshing] = useState(false);
   const [newPlan, setNewPlan] = useState({ name: '', price: '999', botsLimit: '1', messagesLimit: '1000', apiLimit: '500' });
   const [savingPlan, setSavingPlan] = useState(false);
+  const [integrationStatus, setIntegrationStatus] = useState<any>(null);
+  const [integrationTests, setIntegrationTests] = useState<Record<string, any>>({});
+  const [testingProvider, setTestingProvider] = useState('');
+  useEffect(() => {
+    if (section !== 'integrations') return;
+    authenticatedFetch('/api/admin/integrations')
+      .then(async (response) => {
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Could not load integration status.');
+        setIntegrationStatus(result);
+      })
+      .catch((error) => setIntegrationStatus({ error: error.message }));
+  }, [section]);
+  const testIntegration = async (provider: string) => {
+    setTestingProvider(provider);
+    try {
+      const response = await authenticatedFetch('/api/admin/integrations/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
+      const result = await response.json().catch(() => ({}));
+      setIntegrationTests((previous) => ({ ...previous, [provider]: result }));
+    } catch (error: any) {
+      setIntegrationTests((previous) => ({ ...previous, [provider]: { ok: false, error: error.message } }));
+    } finally {
+      setTestingProvider('');
+    }
+  };
+
 
   const updateAdminRecord = async (path: string, payload: any) => {
     try {
@@ -2068,6 +2097,37 @@ function MasterAdminConsole({ adminData, user, onExit, onRefresh }: any) {
           </>}
           {section === 'integrations' && <>
             <div><h2 className="text-lg font-semibold text-white">Channel integration control</h2><p className="mt-1 text-xs text-zinc-500">Review and disconnect customer WhatsApp Cloud API connections. Instagram and Messenger require their separate Meta permissions and OAuth flows.</p></div>
+            <section className="rounded-2xl border border-orange-400/20 bg-[#15191f] p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div><h3 className="text-sm font-semibold text-white">Platform provider setup & health checks</h3><p className="mt-1 text-xs text-zinc-400">Yahan se admin server integrations ki configuration verify aur live credential test kar sakta hai. Secret keys kabhi screen par show nahi hoti.</p></div>
+                <button onClick={() => authenticatedFetch('/api/admin/integrations').then(r=>r.json()).then(setIntegrationStatus)} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-zinc-300 hover:border-orange-400/40">Refresh status</button>
+              </div>
+              {integrationStatus?.error && <p className="mt-3 text-xs text-red-300">{integrationStatus.error}</p>}
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                {([
+                  ['openai','OpenAI AI Engine',integrationStatus?.integrations?.openai?.configured, 'OPENAI_API_KEY', 'AI replies, bot playground and public website chatbot'],
+                  ['meta','Meta / WhatsApp Cloud API',integrationStatus?.integrations?.meta?.configured, 'META_APP_ID · META_APP_SECRET · META_EMBEDDED_SIGNUP_CONFIG_ID', 'Embedded Signup, WABA linking and webhook processing'],
+                  ['razorpay','Razorpay Payments',integrationStatus?.integrations?.razorpay?.configured, 'RAZORPAY_KEY_ID · RAZORPAY_KEY_SECRET', 'Subscription checkout and payment orders'],
+                ] as any[]).map(([key,label,ready,env,description]) => (
+                  <div key={key} className="rounded-xl border border-white/10 bg-[#0c0f13] p-4">
+                    <div className="flex items-center justify-between gap-2"><h4 className="text-xs font-semibold text-white">{label}</h4><span className={ready ? 'rounded-full bg-emerald-400/10 px-2 py-1 text-[9px] font-bold text-emerald-300' : 'rounded-full bg-amber-400/10 px-2 py-1 text-[9px] font-bold text-amber-300'}>{ready ? 'CONFIGURED' : 'NEEDS SETUP'}</span></div>
+                    <p className="mt-2 min-h-9 text-[10px] leading-5 text-zinc-500">{description}</p>
+                    <p className="mt-2 break-words rounded-lg bg-white/[.04] p-2 text-[9px] text-zinc-400">{env}</p>
+                    <button disabled={testingProvider === key} onClick={() => testIntegration(key)} className="mt-3 w-full rounded-lg bg-orange-600 px-3 py-2 text-[10px] font-bold text-white hover:bg-orange-500 disabled:opacity-50">{testingProvider === key ? 'Testing provider…' : 'Test live credentials'}</button>
+                    {integrationTests[key] && <p className={integrationTests[key].ok ? 'mt-2 text-[10px] text-emerald-300' : 'mt-2 text-[10px] text-red-300'}>{integrationTests[key].message || integrationTests[key].error}</p>}
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="rounded-xl border border-white/10 bg-[#0c0f13] p-4"><h4 className="text-xs font-semibold text-white">WhatsApp webhook URL</h4><p className="mt-2 break-all text-[10px] text-orange-200">{integrationStatus?.webhookUrls?.whatsapp || 'Set APP_BASE_URL to your Render service URL'}</p><button onClick={() => navigator.clipboard.writeText(integrationStatus?.webhookUrls?.whatsapp || '')} className="mt-2 rounded-lg border border-white/10 px-3 py-1.5 text-[10px] text-zinc-300">Copy URL</button><p className="mt-2 text-[10px] text-zinc-500">Meta Developer Dashboard → WhatsApp → Configuration → Webhook. Subscribe to messages.</p></div>
+                <div className="rounded-xl border border-white/10 bg-[#0c0f13] p-4"><h4 className="text-xs font-semibold text-white">Razorpay webhook URL</h4><p className="mt-2 break-all text-[10px] text-orange-200">{integrationStatus?.webhookUrls?.razorpay || 'Set APP_BASE_URL to your Render service URL'}</p><button onClick={() => navigator.clipboard.writeText(integrationStatus?.webhookUrls?.razorpay || '')} className="mt-2 rounded-lg border border-white/10 px-3 py-1.5 text-[10px] text-zinc-300">Copy URL</button><p className="mt-2 text-[10px] text-zinc-500">Razorpay Dashboard → Account & Settings → Webhooks. Configure payment.captured.</p></div>
+              </div>
+              <div className="mt-4 rounded-xl border border-white/10 bg-white/[.025] p-4">
+                <h4 className="text-xs font-semibold text-white">Important: customer channel connection</h4>
+                <p className="mt-1 text-[10px] leading-5 text-zinc-400">Platform credentials set hone ke baad client ka WhatsApp number customer workspace ke Channels section se Meta Embedded Signup ke through connect hoga. Instagram aur Messenger ke liye separate Meta OAuth permissions/callback implementation abhi pending hai—unhe connected mark nahi kiya jayega jab tak real OAuth flow complete na ho.</p>
+                <p className="mt-2 text-[10px] text-zinc-500">Additional Meta checks: webhook verify token {integrationStatus?.integrations?.meta?.webhookVerifyConfigured ? 'configured' : 'missing'} · 32-byte token encryption key {integrationStatus?.integrations?.meta?.encryptionConfigured ? 'configured' : 'missing'} · WhatsApp webhook URL above.</p>
+              </div>
+            </section>
             <div className="grid gap-4 md:grid-cols-3">{[{name:'WhatsApp Cloud API',icon:<Smartphone className="h-5 w-5"/>,provider:'whatsapp'},{name:'Instagram Messaging',icon:<Instagram className="h-5 w-5"/>,provider:'instagram'},{name:'Facebook Messenger',icon:<Facebook className="h-5 w-5"/>,provider:'messenger'}].map((channel)=><div key={channel.provider} className="rounded-2xl border border-white/10 bg-[#15191f] p-5"><div className="flex items-center justify-between"><span className="rounded-xl bg-orange-400/10 p-3 text-orange-200">{channel.icon}</span><span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">Connection records</span></div><h3 className="mt-4 text-sm font-semibold text-white">{channel.name}</h3><p className="mt-1 text-xs text-zinc-500">Customer accounts detected: {rows('channels').filter((item:any)=>(item.provider || item.channel || '').toLowerCase().includes(channel.provider)).length}</p></div>)}</div>
             <Table columns={['Channel','Account ID','Status','Created']} data={filtered(rows('channels'))} empty="No connected channel records were returned. No provider is being reported as live without verified data."/>
             <div className="space-y-2">{filtered(rows('channels')).map((channel: any) => <div key={channel.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#15191f] p-4"><div><div className="text-xs font-semibold text-white">WhatsApp · {channel.phoneNumberId || channel.id}</div><div className="mt-1 text-[10px] text-zinc-500">{channel.status}</div></div><button onClick={() => updateAdminRecord(`channels/${channel.id}`, { status: channel.status === 'connected' ? 'disconnected' : 'connected' })} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-zinc-300 hover:border-orange-400/30 hover:text-white">{channel.status === 'connected' ? 'Disconnect' : 'Mark connected'}</button></div>)}</div>
