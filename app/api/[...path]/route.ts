@@ -174,15 +174,25 @@ async function processWhatsAppWebhook(request: NextRequest) {
           body: textBody, delivery_status: 'received',
         });
 
-        const [{ data: aiSettings }, { data: activeBot }, { data: subscription }] = await Promise.all([
+        const [{ data: aiSettings }, { data: activeBot }, { data: subscription }, { data: flows }] = await Promise.all([
           adminDb.from('whatsapp_ai_settings').select('*').eq('organization_id', connection.organization_id).maybeSingle(),
           adminDb.from('ai_bots').select('*').eq('organization_id', connection.organization_id).eq('status', 'active').order('created_at', { ascending: false }).limit(1).maybeSingle(),
           adminDb.from('subscriptions').select('messages_limit,messages_used').eq('organization_id', connection.organization_id).maybeSingle(),
+          adminDb.from('automation_flows').select('*').eq('organization_id', connection.organization_id).eq('status', 'active'),
         ]);
         const openAiKey = process.env.OPENAI_API_KEY || '';
+        const matchingFlow = (flows || []).find((flow: any) => {
+          if (flow.trigger_type === 'incoming_message') return true;
+          if (flow.trigger_type === 'keyword_match') {
+            const keyword = String(flow.definition?.keyword || '').trim().toLowerCase();
+            return Boolean(keyword && textBody.toLowerCase().includes(keyword));
+          }
+          return false;
+        });
+        const flowReply = matchingFlow?.definition?.actions?.find((action: any) => action.type === 'send_reply')?.text;
         const aiEnabled = Boolean(aiSettings?.enabled || activeBot);
-        if (!aiEnabled || !openAiKey || inbound.type !== 'text' ||
-            (subscription && subscription.messages_used >= subscription.messages_limit)) {
+        const quotaReached = Boolean(subscription && subscription.messages_used >= subscription.messages_limit);
+        if (inbound.type !== 'text' || (!flowReply && (!aiEnabled || !openAiKey || quotaReached))) {
           await adminDb.from('webhook_events').update({ processing_status: 'processed', processed_at: new Date().toISOString() }).eq('event_key', eventKey);
           continue;
         }
@@ -194,23 +204,29 @@ async function processWhatsAppWebhook(request: NextRequest) {
           continue;
         }
         const accessToken = decryptToken(secret.token_ciphertext);
-        const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-            messages: [
-              { role: 'system', content: aiSettings?.enabled
-                ? (aiSettings.system_prompt || `You are ${aiSettings.bot_name}. Reply in the customer's language. Keep messages concise, factual and helpful. Never invent prices or order status.`)
-                : `You are ${activeBot?.name || 'AI Soft Studio assistant'}. ${activeBot?.personality || 'Be helpful, concise and professional.'} Reply in the customer's language. Never invent prices, policies or order status. Use this knowledge base:\\n${(activeBot?.knowledge_sources || []).map((item: any) => `${item.title}: ${item.content}`).join('\\n')}`,
-              },
-              { role: 'user', content: textBody },
-            ],
-            temperature: 0.4,
-          }),
-        });
-        const aiData = await aiResponse.json().catch(() => ({}));
-        const reply = aiResponse.ok ? String(aiData.choices?.[0]?.message?.content || '') : '';
+        let reply = String(flowReply || '');
+        let aiSucceeded = false;
+        if (!reply) {
+          const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+              messages: [
+                { role: 'system', content: aiSettings?.enabled
+                  ? (aiSettings.system_prompt || `You are ${aiSettings.bot_name}. Reply in the customer's language. Keep messages concise, factual and helpful. Never invent prices or order status.`)
+                  : `You are ${activeBot?.name || 'AI Soft Studio assistant'}. ${activeBot?.personality || 'Be helpful, concise and professional.'} Reply in the customer's language. Never invent prices, policies or order status. Use this knowledge base:\\n${(activeBot?.knowledge_sources || []).map((item: any) => `${item.title}: ${item.content}`).join('\\n')}`,
+                },
+                { role: 'user', content: textBody },
+              ],
+              temperature: 0.4,
+            }),
+          });
+          const aiData = await aiResponse.json().catch(() => ({}));
+          aiSucceeded = aiResponse.ok;
+          reply = aiResponse.ok ? String(aiData.choices?.[0]?.message?.content || '') : '';
+        }
+        let sendSucceeded = false;
         if (reply) {
           const sendResponse = await fetch(`https://graph.facebook.com/${version}/${phoneNumberId}/messages`, {
             method: 'POST',
@@ -218,7 +234,8 @@ async function processWhatsAppWebhook(request: NextRequest) {
             body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: sender, type: 'text', text: { body: reply } }),
           });
           const sendData = await sendResponse.json().catch(() => ({}));
-          if (sendResponse.ok) {
+          sendSucceeded = sendResponse.ok;
+          if (sendSucceeded) {
             await adminDb.from('messages').insert({
               organization_id: connection.organization_id, conversation_id: conversation.id,
               meta_message_id: sendData.messages?.[0]?.id || null, direction: 'outbound',
@@ -226,14 +243,24 @@ async function processWhatsAppWebhook(request: NextRequest) {
             });
           }
         }
-        if (aiResponse.ok && subscription) {
+        if (matchingFlow) {
+          await adminDb.from('automation_runs').insert({
+            organization_id: connection.organization_id, flow_id: matchingFlow.id,
+            status: sendSucceeded ? 'completed' : 'failed',
+            input: { message: textBody, from: sender },
+            output: { reply }, started_at: now, completed_at: new Date().toISOString(),
+            error: sendSucceeded ? null : 'WhatsApp send failed or returned no reply.',
+          });
+        }
+        if (aiSucceeded && sendSucceeded && subscription) {
           await adminDb.from('subscriptions').update({
             messages_used: Number(subscription.messages_used || 0) + 1,
             updated_at: new Date().toISOString(),
           }).eq('organization_id', connection.organization_id);
         }
         await adminDb.from('webhook_events').update({
-          processing_status: aiResponse.ok ? 'processed' : 'failed', processed_at: new Date().toISOString(),
+          processing_status: sendSucceeded || (!matchingFlow && !aiSucceeded) ? 'processed' : 'failed',
+          processed_at: new Date().toISOString(),
         }).eq('event_key', eventKey);
       }
 
