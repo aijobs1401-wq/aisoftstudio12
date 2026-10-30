@@ -834,6 +834,24 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
     await adminDb.from('audit_logs').insert({ actor_id: ctx.user.id, action: 'admin.user_role_updated', entity_type: 'profile', entity_id: path[2], details: { role } });
     return json(data);
   }
+  if (path[0] === 'admin' && path[1] === 'bots' && path[2] && method === 'PUT') {
+    const adminDb = await requireAdmin(ctx);
+    const status = String((body as any).status || '');
+    if (!['active','paused','archived','draft'].includes(status)) return json({ error: 'Invalid AI bot status.' }, 400);
+    const { data, error } = await adminDb.from('ai_bots').update({ status, updated_at: new Date().toISOString() }).eq('id', path[2]).select('*').single();
+    if (error) throw new Error(error.message);
+    await adminDb.from('audit_logs').insert({ actor_id: ctx.user.id, organization_id: data.organization_id, action: 'admin.bot_status_updated', entity_type: 'ai_bot', entity_id: path[2], details: { status } });
+    return json(botShape(data));
+  }
+  if (path[0] === 'admin' && path[1] === 'channels' && path[2] && method === 'PUT') {
+    const adminDb = await requireAdmin(ctx);
+    const status = String((body as any).status || '');
+    if (!['connected','disconnected','error'].includes(status)) return json({ error: 'Invalid channel connection status.' }, 400);
+    const { data, error } = await adminDb.from('whatsapp_connections').update({ connection_status: status, updated_at: new Date().toISOString() }).eq('id', path[2]).select('*').single();
+    if (error) throw new Error(error.message);
+    await adminDb.from('audit_logs').insert({ actor_id: ctx.user.id, organization_id: data.organization_id, action: 'admin.channel_status_updated', entity_type: 'whatsapp_connection', entity_id: path[2], details: { status } });
+    return json({ id: data.id, status: data.connection_status });
+  }
   if (path[0] === 'admin' && path[1] === 'workspaces' && path[2] && method === 'PUT') {
     const adminDb = await requireAdmin(ctx);
     const status = String((body as any).status || '');
