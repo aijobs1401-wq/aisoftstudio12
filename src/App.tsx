@@ -167,9 +167,7 @@ export default function App() {
 
       setWorkspaces(wsRes);
       setBots(botsRes);
-      if (botsRes.length > 0 && !selectedBot) {
-        setSelectedBot(botsRes[0]);
-      }
+      setSelectedBot(botsRes.length > 0 ? botsRes[0] : null);
       setConversations(convsRes);
       setLeads(leadsRes);
       setChannels(chansRes);
@@ -1240,6 +1238,11 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
 function LiveInbox({ conversations, workspaceId, onRefresh }: any) {
   const [selectedConv, setSelectedConv] = useState(conversations[0] || null);
   const [replyText, setReplyText] = useState('');
+
+  useEffect(() => {
+    setSelectedConv(conversations[0] || null);
+    setReplyText('');
+  }, [conversations]);
 
   const handleSendReply = async (e: React.FormEvent) => {
     e.preventDefault();
