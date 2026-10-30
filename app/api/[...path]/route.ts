@@ -174,10 +174,15 @@ async function processWhatsAppWebhook(request: NextRequest) {
           body: textBody, delivery_status: 'received',
         });
 
-        const { data: aiSettings } = await adminDb.from('whatsapp_ai_settings').select('*')
-          .eq('organization_id', connection.organization_id).maybeSingle();
+        const [{ data: aiSettings }, { data: activeBot }, { data: subscription }] = await Promise.all([
+          adminDb.from('whatsapp_ai_settings').select('*').eq('organization_id', connection.organization_id).maybeSingle(),
+          adminDb.from('ai_bots').select('*').eq('organization_id', connection.organization_id).eq('status', 'active').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+          adminDb.from('subscriptions').select('messages_limit,messages_used').eq('organization_id', connection.organization_id).maybeSingle(),
+        ]);
         const openAiKey = process.env.OPENAI_API_KEY || '';
-        if (!aiSettings?.enabled || !openAiKey || inbound.type !== 'text') {
+        const aiEnabled = Boolean(aiSettings?.enabled || activeBot);
+        if (!aiEnabled || !openAiKey || inbound.type !== 'text' ||
+            (subscription && subscription.messages_used >= subscription.messages_limit)) {
           await adminDb.from('webhook_events').update({ processing_status: 'processed', processed_at: new Date().toISOString() }).eq('event_key', eventKey);
           continue;
         }
@@ -195,7 +200,10 @@ async function processWhatsAppWebhook(request: NextRequest) {
           body: JSON.stringify({
             model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
             messages: [
-              { role: 'system', content: aiSettings.system_prompt || `You are ${aiSettings.bot_name}. Reply in the customer's language. Keep messages concise, factual and helpful. Never invent prices or order status.` },
+              { role: 'system', content: aiSettings?.enabled
+                ? (aiSettings.system_prompt || `You are ${aiSettings.bot_name}. Reply in the customer's language. Keep messages concise, factual and helpful. Never invent prices or order status.`)
+                : `You are ${activeBot?.name || 'AI Soft Studio assistant'}. ${activeBot?.personality || 'Be helpful, concise and professional.'} Reply in the customer's language. Never invent prices, policies or order status. Use this knowledge base:\\n${(activeBot?.knowledge_sources || []).map((item: any) => `${item.title}: ${item.content}`).join('\\n')}`,
+              },
               { role: 'user', content: textBody },
             ],
             temperature: 0.4,
@@ -217,6 +225,12 @@ async function processWhatsAppWebhook(request: NextRequest) {
               message_type: 'text', body: reply, delivery_status: 'sent',
             });
           }
+        }
+        if (aiResponse.ok && subscription) {
+          await adminDb.from('subscriptions').update({
+            messages_used: Number(subscription.messages_used || 0) + 1,
+            updated_at: new Date().toISOString(),
+          }).eq('organization_id', connection.organization_id);
         }
         await adminDb.from('webhook_events').update({
           processing_status: aiResponse.ok ? 'processed' : 'failed', processed_at: new Date().toISOString(),
