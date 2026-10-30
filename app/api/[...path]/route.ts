@@ -101,6 +101,64 @@ function decryptToken(value: string) {
   return Buffer.concat([decipher.update(Buffer.from(encryptedValue, 'base64')), decipher.final()]).toString('utf8');
 }
 
+async function processRazorpayWebhook(request: NextRequest) {
+  const rawBody = await request.text();
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET || '';
+  const signature = request.headers.get('x-razorpay-signature') || '';
+  if (!secret) return json({ error: 'RAZORPAY_WEBHOOK_SECRET is not configured.' }, 503);
+  const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) {
+    return json({ error: 'Invalid Razorpay webhook signature.' }, 401);
+  }
+  let event: any;
+  try { event = JSON.parse(rawBody); } catch { return json({ error: 'Invalid Razorpay webhook JSON.' }, 400); }
+  const adminDb = serviceClient();
+  const eventKey = String(event.id || `razorpay-${event.event || 'event'}-${Date.now()}`);
+  const { data: accepted } = await adminDb.from('webhook_events').upsert({
+    event_key: eventKey, payload: event, processing_status: 'pending',
+  }, { onConflict: 'event_key', ignoreDuplicates: true }).select('event_key').maybeSingle();
+  if (!accepted) return json({ status: 'duplicate_ignored' });
+  if (!['payment.captured','order.paid'].includes(event.event)) {
+    await adminDb.from('webhook_events').update({ processing_status: 'processed', processed_at: new Date().toISOString() }).eq('event_key', eventKey);
+    return json({ status: 'ignored_event' });
+  }
+  const paymentEntity = event.payload?.payment?.entity || {};
+  const orderId = paymentEntity.order_id || event.payload?.order?.entity?.id;
+  if (!orderId) {
+    await adminDb.from('webhook_events').update({ processing_status: 'failed', processed_at: new Date().toISOString() }).eq('event_key', eventKey);
+    return json({ error: 'Razorpay event did not include an order ID.' }, 400);
+  }
+  const { data: payment } = await adminDb.from('payments').select('*').eq('provider_order_id', orderId).maybeSingle();
+  if (!payment) {
+    await adminDb.from('webhook_events').update({ processing_status: 'failed', processed_at: new Date().toISOString() }).eq('event_key', eventKey);
+    return json({ error: 'Payment order was not found in this platform.' }, 404);
+  }
+  await adminDb.from('payments').update({ status: 'captured', provider_payment_id: paymentEntity.id || null }).eq('id', payment.id);
+  const { data: plan } = await adminDb.from('plans').select('*').eq('name', payment.plan_name).maybeSingle();
+  await adminDb.from('subscriptions').upsert({
+    organization_id: payment.organization_id,
+    plan_id: plan?.id || null,
+    plan_name: payment.plan_name || plan?.name || 'Starter',
+    status: 'active',
+    bots_limit: plan?.bots_limit || 1,
+    messages_limit: plan?.messages_limit || 1000,
+    messages_used: 0,
+    api_limit: plan?.api_limit || 500,
+    api_used: 0,
+    renew_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'organization_id' });
+  await adminDb.from('audit_logs').insert({
+    organization_id: payment.organization_id, action: 'payment.captured',
+    entity_type: 'payment', entity_id: payment.id,
+    details: { order_id: orderId, payment_id: paymentEntity.id || null, plan_name: payment.plan_name },
+  });
+  await adminDb.from('webhook_events').update({ processing_status: 'processed', processed_at: new Date().toISOString() }).eq('event_key', eventKey);
+  return json({ status: 'ok' });
+}
+
 async function processWhatsAppWebhook(request: NextRequest) {
   if (request.method === 'GET') {
     const mode = request.nextUrl.searchParams.get('hub.mode');
@@ -314,7 +372,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
   const path = (await params).path || [];
   const route = path.join('/');
   const method = request.method;
-  if (route === 'whatsapp/webhook') return processWhatsAppWebhook(request);
+  if (route === 'whatsapp/webhook') return processWhatsAppWebhook(request);\n  if (route === 'webhooks/payment') return processRazorpayWebhook(request);
   const body = method === 'GET' || method === 'DELETE' ? {} : await request.json().catch(() => ({}));
 
   // Public chatbot discovery and chat endpoints are intentionally separate from dashboard auth.
