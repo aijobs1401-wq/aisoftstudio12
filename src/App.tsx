@@ -158,7 +158,7 @@ export default function App() {
       setApiKeys(keysRes);
       setSubscription(subRes);
 
-      if (user?.role === 'master_admin') {
+      if (['master_admin', 'admin'].includes(user?.role)) {
         const adminRes = await fetch('/api/admin/overview').then(r => r.json());
         setAdminData(adminRes);
       }
@@ -166,6 +166,14 @@ export default function App() {
       console.error('Error loading data:', err);
     }
   };
+
+  // Load the signed-in user's workspace after authentication.
+  // This also initializes the admin data request instead of leaving the dashboard empty.
+  useEffect(() => {
+    if (user?.id) {
+      void loadWorkspaceData(user.workspaceId || selectedWorkspace);
+    }
+  }, [user?.id]);
 
   // If public chat view
   if (publicChatBotId) {
@@ -189,7 +197,7 @@ export default function App() {
     );
   }
 
-  if (user?.role === 'master_admin' && activeTab === 'admin') {
+  if (['master_admin', 'admin'].includes(user?.role) && activeTab === 'admin') {
     return (
       <MasterAdminConsole
         adminData={adminData}
@@ -221,7 +229,7 @@ export default function App() {
               <div>
                 <h1 className="font-extrabold text-sm tracking-wide text-white">AI SOFT STUDIO</h1>
                 <span className="text-[10px] text-orange-400 font-medium px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-500/20">
-                  {user?.role === 'master_admin' ? 'Master Admin' : 'Pro SaaS'}
+                  {['master_admin', 'admin'].includes(user?.role) ? 'Master Admin' : 'Pro SaaS'}
                 </span>
               </div>
             </div>
@@ -236,7 +244,7 @@ export default function App() {
             <NavItem icon={<Globe className="w-4 h-4" />} label="Channels (WA, IG, FB)" active={activeTab === 'channels'} onClick={() => setActiveTab('channels')} />
             <NavItem icon={<Key className="w-4 h-4" />} label="API & Widget Embed" active={activeTab === 'api'} onClick={() => setActiveTab('api')} />
             <NavItem icon={<CreditCard className="w-4 h-4" />} label="Subscription & Limits" active={activeTab === 'billing'} onClick={() => setActiveTab('billing')} />
-            {user?.role === 'master_admin' && (
+            {['master_admin', 'admin'].includes(user?.role) && (
               <NavItem icon={<ShieldAlert className="w-4 h-4 text-amber-400" />} label="Master Admin Panel" active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} />
             )}
           </nav>
