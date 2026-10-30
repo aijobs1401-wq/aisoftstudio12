@@ -380,6 +380,54 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
     return json({ error: 'Method not allowed.' }, 405);
   }
 
+  if (route === 'v1/chat/completions' && method === 'POST') {
+    const rawKey = (request.headers.get('authorization') || '').replace(/^Bearer\\s+/i, '');
+    if (!rawKey.startsWith('ass_live_')) return json({ error: { message: 'A valid AI Soft Studio API key is required.' } }, 401);
+    const adminDb = serviceClient();
+    const keyHash = createHash('sha256').update(rawKey).digest('hex');
+    const { data: apiKey, error: keyError } = await adminDb.from('organization_api_keys')
+      .select('id,organization_id').eq('key_hash', keyHash).is('revoked_at', null).maybeSingle();
+    if (keyError || !apiKey) return json({ error: { message: 'Invalid or revoked API key.' } }, 401);
+    const { data: subscription } = await adminDb.from('subscriptions').select('api_limit,api_used')
+      .eq('organization_id', apiKey.organization_id).maybeSingle();
+    if (subscription && subscription.api_used >= subscription.api_limit) {
+      return json({ error: { message: 'API quota exceeded. Upgrade the workspace plan to continue.' } }, 429);
+    }
+    const botId = String((body as any).bot_id || (body as any).botId || '');
+    let botQuery = adminDb.from('ai_bots').select('*').eq('organization_id', apiKey.organization_id).eq('status', 'active');
+    if (botId) botQuery = botQuery.eq('id', botId) as any;
+    const { data: bot } = await botQuery.order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (!bot) return json({ error: { message: 'No active AI bot is available for this API key.' } }, 404);
+    const openAiKey = process.env.OPENAI_API_KEY || '';
+    if (!openAiKey) return json({ error: { message: 'AI provider is not configured on the server.' } }, 503);
+    const suppliedMessages = Array.isArray((body as any).messages) ? (body as any).messages.slice(-20) : [];
+    const knowledge = (bot.knowledge_sources || []).map((item: any) => `${item.title}: ${item.content}`).join('\\n');
+    const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: `You are ${bot.name}. ${bot.personality}. Reply in the customer's language. Never invent prices, policies or order status. Knowledge base:\\n${knowledge}` },
+          ...suppliedMessages.filter((item: any) => ['user','assistant'].includes(item.role) && typeof item.content === 'string'),
+        ],
+        temperature: 0.4,
+      }),
+    });
+    const aiData = await aiResponse.json().catch(() => ({}));
+    if (!aiResponse.ok) return json({ error: { message: aiData.error?.message || 'AI provider request failed.' } }, 502);
+    await adminDb.from('organization_api_keys').update({ last_used_at: new Date().toISOString() }).eq('id', apiKey.id);
+    if (subscription) await adminDb.from('subscriptions').update({ api_used: Number(subscription.api_used || 0) + 1, updated_at: new Date().toISOString() }).eq('organization_id', apiKey.organization_id);
+    return json({
+      id: `chatcmpl-${randomBytes(12).toString('hex')}`,
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      choices: [{ index: 0, message: aiData.choices?.[0]?.message || { role: 'assistant', content: '' }, finish_reason: aiData.choices?.[0]?.finish_reason || 'stop' }],
+      usage: aiData.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    });
+  }
+
   const ctx = await contextFor(request);
   const orgId = ctx.organizationId;
   const client = ctx.client;
