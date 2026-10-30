@@ -9,7 +9,7 @@ const supabaseUrl =
 const supabasePublishableKey =
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdWIiLCJyZWYiOiJqa3Vma2FmaW1rZ2ZzaGJ2ZnNhcHIiLCJyb2xlIjoiYW5vbiJ9.mock_key_for_build';
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJr dWZrYWZta2dmc2hidmZzYXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDAxNzg2MDAsImV4cCI6MjA1NTc1NDYwMH0.mock_key_for_build';
 
 if (!supabaseUrl || !supabasePublishableKey) {
   console.warn(
