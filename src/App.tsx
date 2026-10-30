@@ -940,7 +940,7 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
     const response = await authenticatedFetch(`/api/bots/${selectedBot.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, welcomeMessage, personality, language })
+      body: JSON.stringify({ workspaceId, name, welcomeMessage, personality, language })
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -957,7 +957,7 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
     const res = await authenticatedFetch(`/api/bots/${selectedBot.id}/knowledge`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: newKsType, title: newKsTitle, content: newKsContent })
+      body: JSON.stringify({ workspaceId, type: newKsType, title: newKsTitle, content: newKsContent })
     });
     const updated = await res.json();
     setSelectedBot(updated);
@@ -968,7 +968,7 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
 
   const handleDeleteKnowledge = async (ksId: string) => {
     if (!selectedBot) return;
-    const res = await authenticatedFetch(`/api/bots/${selectedBot.id}/knowledge/${ksId}`, {
+    const res = await authenticatedFetch(`/api/bots/${selectedBot.id}/knowledge/${ksId}?workspaceId=${workspaceId}`, {
       method: 'DELETE'
     });
     const updated = await res.json();
@@ -1250,7 +1250,7 @@ function LiveInbox({ conversations, workspaceId, onRefresh }: any) {
     await authenticatedFetch(`/api/conversations/${selectedConv.id}/reply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: replyText })
+      body: JSON.stringify({ workspaceId, text: replyText })
     });
     setReplyText('');
     onRefresh();
@@ -1766,7 +1766,7 @@ function ApiWidgetView({ apiKeys, bots, workspaceId, onRefresh }: any) {
               </div>
               <button
                 onClick={async () => {
-                  await authenticatedFetch(`/api/apikeys/${k.id}`, { method: 'DELETE' });
+                  await authenticatedFetch(`/api/apikeys/${k.id}?workspaceId=${workspaceId}`, { method: 'DELETE' });
                   onRefresh();
                 }}
                 className="text-zinc-500 hover:text-red-400 transition"
