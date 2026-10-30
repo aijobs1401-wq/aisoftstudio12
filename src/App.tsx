@@ -1,5 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './lib/supabaseClient';
+
+async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const { data } = await supabase.auth.getSession();
+  const headers = new Headers(init.headers);
+  if (data.session?.access_token) {
+    headers.set('Authorization', `Bearer ${data.session.access_token}`);
+  }
+  return fetch(input, { ...init, headers });
+}
 import { 
   Bot, MessageSquare, Users, Database, Globe, Key, CreditCard, ShieldAlert, 
   Plus, Settings, Send, Copy, Check, QrCode, Phone, Share2, RefreshCw, 
@@ -60,12 +69,19 @@ export default function App() {
       .eq('id', authUser.id)
       .maybeSingle();
 
+    const { data: membership } = await supabase
+      .from('organization_members')
+      .select('organization_id,role')
+      .eq('user_id', authUser.id)
+      .limit(1)
+      .maybeSingle();
+
     const appUser = {
       id: authUser.id,
       email: authUser.email || '',
       name: profile?.full_name || profile?.display_name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User',
       role: profile?.role || 'viewer',
-      workspaceId: authUser.id,
+      workspaceId: membership?.organization_id || '',
     };
     setUser(appUser);
     setToken(authUser.id);
@@ -138,13 +154,13 @@ export default function App() {
   const loadWorkspaceData = async (wsId: string) => {
     try {
       const [wsRes, botsRes, convsRes, leadsRes, chansRes, keysRes, subRes] = await Promise.all([
-        fetch('/api/workspaces').then(r => r.json()),
-        fetch(`/api/bots?workspaceId=${wsId}`).then(r => r.json()),
-        fetch(`/api/conversations?workspaceId=${wsId}`).then(r => r.json()),
-        fetch(`/api/leads?workspaceId=${wsId}`).then(r => r.json()),
-        fetch(`/api/channels?workspaceId=${wsId}`).then(r => r.json()),
-        fetch(`/api/apikeys?workspaceId=${wsId}`).then(r => r.json()),
-        fetch(`/api/subscription?workspaceId=${wsId}`).then(r => r.json()),
+        authenticatedFetch('/api/workspaces').then(r => r.json()),
+        authenticatedFetch(`/api/bots?workspaceId=${wsId}`).then(r => r.json()),
+        authenticatedFetch(`/api/conversations?workspaceId=${wsId}`).then(r => r.json()),
+        authenticatedFetch(`/api/leads?workspaceId=${wsId}`).then(r => r.json()),
+        authenticatedFetch(`/api/channels?workspaceId=${wsId}`).then(r => r.json()),
+        authenticatedFetch(`/api/apikeys?workspaceId=${wsId}`).then(r => r.json()),
+        authenticatedFetch(`/api/subscription?workspaceId=${wsId}`).then(r => r.json()),
       ]);
 
       setWorkspaces(wsRes);
@@ -159,7 +175,7 @@ export default function App() {
       setSubscription(subRes);
 
       if (['master_admin', 'admin'].includes(user?.role)) {
-        const adminRes = await fetch('/api/admin/overview').then(r => r.json());
+        const adminRes = await authenticatedFetch('/api/admin/overview').then(r => r.json());
         setAdminData(adminRes);
       }
     } catch (err) {
@@ -205,7 +221,7 @@ export default function App() {
         onExit={() => setActiveTab('overview')}
         onRefresh={async () => {
           try {
-            const response = await fetch('/api/admin/overview');
+            const response = await authenticatedFetch('/api/admin/overview');
             if (response.ok) setAdminData(await response.json());
           } catch (error) {
             console.error('Admin refresh failed:', error);
@@ -914,7 +930,7 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBot) return;
-    await fetch(`/api/bots/${selectedBot.id}`, {
+    await authenticatedFetch(`/api/bots/${selectedBot.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, welcomeMessage, personality, language })
@@ -926,7 +942,7 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
   const handleAddKnowledge = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBot || !newKsTitle || !newKsContent) return;
-    const res = await fetch(`/api/bots/${selectedBot.id}/knowledge`, {
+    const res = await authenticatedFetch(`/api/bots/${selectedBot.id}/knowledge`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: newKsType, title: newKsTitle, content: newKsContent })
@@ -940,7 +956,7 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
 
   const handleDeleteKnowledge = async (ksId: string) => {
     if (!selectedBot) return;
-    const res = await fetch(`/api/bots/${selectedBot.id}/knowledge/${ksId}`, {
+    const res = await authenticatedFetch(`/api/bots/${selectedBot.id}/knowledge/${ksId}`, {
       method: 'DELETE'
     });
     const updated = await res.json();
@@ -957,7 +973,7 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
     setIsSending(true);
 
     try {
-      const res = await fetch(`/api/chatbots/${selectedBot.id}/chat`, {
+      const res = await authenticatedFetch(`/api/chatbots/${selectedBot.id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMsg })
@@ -978,7 +994,7 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
           <h3 className="text-sm font-bold text-white">Your Chatbots</h3>
           <button
             onClick={async () => {
-              const res = await fetch('/api/bots', {
+              const res = await authenticatedFetch('/api/bots', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ workspaceId, name: 'New Support Assistant' })
@@ -1214,7 +1230,7 @@ function LiveInbox({ conversations, workspaceId, onRefresh }: any) {
   const handleSendReply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedConv || !replyText.trim()) return;
-    await fetch(`/api/conversations/${selectedConv.id}/reply`, {
+    await authenticatedFetch(`/api/conversations/${selectedConv.id}/reply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: replyText })
@@ -1352,7 +1368,7 @@ function ChannelsView({ channels, workspaceId, onRefresh }: any) {
 
   const handleConnectWhatsApp = async (e: React.FormEvent) => {
     e.preventDefault();
-    await fetch('/api/channels/whatsapp', {
+    await authenticatedFetch('/api/channels/whatsapp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceId, phoneNumberId: phoneId, accessToken: token })
@@ -1462,7 +1478,7 @@ function ApiWidgetView({ apiKeys, bots, workspaceId, onRefresh }: any) {
   const handleCreateKey = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKeyName) return;
-    const res = await fetch('/api/apikeys', {
+    const res = await authenticatedFetch('/api/apikeys', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceId, name: newKeyName })
@@ -1536,7 +1552,7 @@ function ApiWidgetView({ apiKeys, bots, workspaceId, onRefresh }: any) {
               </div>
               <button
                 onClick={async () => {
-                  await fetch(`/api/apikeys/${k.id}`, { method: 'DELETE' });
+                  await authenticatedFetch(`/api/apikeys/${k.id}`, { method: 'DELETE' });
                   onRefresh();
                 }}
                 className="text-zinc-500 hover:text-red-400 transition"
@@ -1556,7 +1572,7 @@ function ApiWidgetView({ apiKeys, bots, workspaceId, onRefresh }: any) {
 // -------------------------------------------------------------------------
 function BillingView({ subscription, workspaceId, onRefresh }: any) {
   const handleUpgrade = async (planName: string) => {
-    await fetch('/api/subscription/upgrade', {
+    await authenticatedFetch('/api/subscription/upgrade', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceId, planName })
@@ -1776,7 +1792,7 @@ function PublicChatView({ botId, isWidget }: any) {
   const [convId, setConvId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/chatbots/${botId}/public`)
+    authenticatedFetch(`/api/chatbots/${botId}/public`)
       .then(r => r.json())
       .then(data => {
         setBot(data);
@@ -1796,7 +1812,7 @@ function PublicChatView({ botId, isWidget }: any) {
     setMessages((prev: any) => [...prev, { sender: 'customer', text: txt }]);
 
     try {
-      const res = await fetch(`/api/chatbots/${botId}/chat`, {
+      const res = await authenticatedFetch(`/api/chatbots/${botId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: txt, conversationId: convId })
