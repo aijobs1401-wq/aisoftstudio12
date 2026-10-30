@@ -1,153 +1,84 @@
-# Deployment Guide - Vercel
+# AI SOFT STUDIO — Render Deployment
 
-This is a complete guide to deploy **WACRM** on Vercel.
+This repository is deployed as a Next.js application on Render. Keep the existing Render service connected to the `main` branch.
 
-## Prerequisites
+## Render service
 
-Before deploying, you need:
+- Service: `aisoftstudio12`
+- URL: https://aisoftstudio12.onrender.com
+- Build command: `bun install && bun run build`
+- Start command: `bun run start`
+- Runtime: Node.js 20+
 
-1. **Vercel Account** — Sign up at [vercel.com](https://vercel.com)
-2. **Supabase Project** — Database & authentication backend
-3. **Meta App** — WhatsApp Business API credentials
-4. **Encryption Key** — For securing WhatsApp tokens
+Do not switch this service to the legacy Express/Vite `server.ts`; the deployed application uses Next.js route handlers under `app/api`.
 
-## Step 1: Set Up Supabase
+## Required environment variables
 
-1. Go to [supabase.com](https://supabase.com) and create a new project
-2. Get your credentials from **Project Settings → API**:
-   - `NEXT_PUBLIC_SUPABASE_URL` — Project URL
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Anon public key
-   - `SUPABASE_SERVICE_ROLE_KEY` — Service role key (keep secret!)
-3. Run all migrations from `supabase/migrations/` directory in Supabase SQL editor
+Configure these in Render → service → Environment. Never paste secret values into source control or chat.
 
-## Step 2: Generate Encryption Key
+| Variable | Purpose |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Browser-safe Supabase publishable key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only admin database access |
+| `OPENAI_API_KEY` | AI responses for website chat, API and WhatsApp |
+| `OPENAI_MODEL` | Optional model override; default is `gpt-4o-mini` |
+| `META_APP_ID` | Meta app ID (server) |
+| `META_APP_SECRET` | Meta app secret (server only) |
+| `META_EMBEDDED_SIGNUP_CONFIG_ID` | Embedded Signup config ID (server) |
+| `META_WEBHOOK_VERIFY_TOKEN` | Random verification token configured in Meta Webhooks |
+| `WHATSAPP_TOKEN_ENCRYPTION_KEY` | 32-byte key encoded as 64 hex characters or base64 |
+| `NEXT_PUBLIC_META_APP_ID` | Same Meta app ID, used by Facebook JS SDK |
+| `NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID` | Same Embedded Signup config ID, used by browser |
+| `META_GRAPH_API_VERSION` | Optional; defaults to `v23.0` |
+| `NEXT_PUBLIC_META_GRAPH_API_VERSION` | Browser SDK version; defaults to `v23.0` |
 
-Run this command in your terminal:
+For billing, add `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`. Payment orders are not activated until a signed Razorpay webhook confirms capture.
 
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
+## Supabase
 
-Copy the output — this is your `ENCRYPTION_KEY`.
+The application uses Supabase Auth and tenant-scoped tables. Each customer is assigned a separate organization/workspace. Row Level Security is enabled on tenant data. The service-role key is server-only and must never use a `NEXT_PUBLIC_` prefix.
 
-## Step 3: Get Meta App Credentials
+The agency data model includes AI bots, knowledge sources, leads, subscriptions, plans, payments, API keys, automation flows/runs, audit logs, WhatsApp connections and encrypted connection secrets.
 
-1. Go to [Meta for Developers](https://developers.facebook.com)
-2. Create or select your app
-3. Get your `META_APP_SECRET` from **App Settings → Basic**
+New Auth users are provisioned with a workspace and owner membership by the database trigger. Platform roles are stored in `public.profiles.role`; `admin` is the platform administrator role.
 
-## Step 4: Deploy on Vercel
+## Meta webhooks
 
-### Option A: Connect GitHub (Recommended)
+Configure the WhatsApp webhook callback as:
 
-1. Go to [vercel.com/new](https://vercel.com/new)
-2. Click **Import Git Repository**
-3. Paste your GitHub repo: `https://github.com/parthkavad54/WACRM.git`
-4. Click **Import**
-5. Set up environment variables (next step)
-6. Click **Deploy**
+`https://aisoftstudio12.onrender.com/api/whatsapp/webhook`
 
-### Option B: Deploy via CLI
+Use the exact value of `META_WEBHOOK_VERIFY_TOKEN` as the Meta verify token. Subscribe the Meta app to the WhatsApp `messages` field. The webhook validates Meta's `X-Hub-Signature-256` using `META_APP_SECRET`, routes events by Phone Number ID, and reads the encrypted customer token server-side.
 
-```bash
-npm install -g vercel
-vercel login
-cd c:\Users\HELLO\Desktop\projects\wacrm
-vercel
-```
+The Embedded Signup button requires both `NEXT_PUBLIC_META_APP_ID` and `NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID`. Server-side code exchange also requires `META_APP_ID`, `META_APP_SECRET`, and `META_EMBEDDED_SIGNUP_CONFIG_ID`.
 
-## Step 5: Configure Environment Variables
+## Razorpay webhook
 
-In Vercel Dashboard → **Settings → Environment Variables**, add:
+Configure the webhook callback as:
 
-| Key | Value |
-|-----|-------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Your Supabase anon key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Your Supabase service role key |
-| `ENCRYPTION_KEY` | Generated 64-char hex key |
-| `META_APP_SECRET` | Your Meta app secret |
-| `NEXT_PUBLIC_SITE_URL` | Your Vercel domain (e.g., `https://wacrm.vercel.app`) |
+`https://aisoftstudio12.onrender.com/api/webhooks/payment`
 
-**Important:** Make sure `SUPABASE_SERVICE_ROLE_KEY` is added as a **Secret** (locked icon), not a public variable.
+Subscribe to `payment.captured` and `order.paid`. Set the same webhook secret in Render as `RAZORPAY_WEBHOOK_SECRET`.
 
-## Step 6: Configure WhatsApp Webhook
+## Customer API
 
-After deployment:
+API keys are created in the customer dashboard and shown once. The OpenAI-compatible endpoint is:
 
-1. Get your Vercel domain (e.g., `https://wacrm-parthkavad54.vercel.app`)
-2. In Meta for Developers → App Settings → Webhooks:
-   - **Callback URL:** `https://your-domain.com/api/whatsapp/webhook`
-   - **Verify Token:** Any random string (save it)
-3. Add to Vercel environment variables:
-   - `WHATSAPP_WEBHOOK_VERIFY_TOKEN` — The token you just created
+`POST https://aisoftstudio12.onrender.com/api/v1/chat/completions`
 
-## Step 7: Test the Deployment
+Send `Authorization: Bearer ass_live_...` and a JSON body containing `bot_id` and `messages`.
 
-Once deployed:
+## Website widget
 
-1. Visit your Vercel domain
-2. Sign up a new account
-3. Go to **Settings → WhatsApp Config**
-4. Paste your WhatsApp credentials
-5. Test by sending a WhatsApp message to your number
+Add the generated snippet from the customer dashboard to the website. The widget loads `/widget.js` and opens the tenant's public chat page.
 
-## Troubleshooting
+## Deploy and verify
 
-### Build Fails
-- Check that all dependencies installed locally with `npm install`
-- Verify Node.js version matches: `"engines": { "node": ">=20.0.0" }`
+1. Push changes to `main`.
+2. Confirm a new Render deploy starts for the latest commit.
+3. Check Render build and runtime logs.
+4. Test sign-up, sign-in, workspace isolation, bot creation, public chat, API key usage and webhook delivery.
+5. Test Meta Embedded Signup with a Meta test business before onboarding production customers.
 
-### Environment Variables Not Working
-- Make sure variables are added in Vercel Dashboard, not just locally
-- Redeploy after adding variables: Click **Deployments → Select latest → Redeploy**
-
-### WhatsApp Webhook Not Triggering
-- Verify callback URL is correct (check Vercel logs)
-- Confirm `META_APP_SECRET` matches your Meta app
-- Check that `WHATSAPP_WEBHOOK_VERIFY_TOKEN` matches Meta configuration
-
-### Database Connection Failed
-- Confirm `NEXT_PUBLIC_SUPABASE_URL` and keys are correct
-- Check that Supabase project is active
-- Verify migrations have been run
-
-## Useful Commands
-
-```bash
-# View Vercel deployment logs
-vercel logs
-
-# Set environment variable locally (for testing)
-$env:NEXT_PUBLIC_SUPABASE_URL="your-url"
-
-# Build locally to test
-npm run build
-
-# Start production build locally
-npm run start
-```
-
-## Production Checklist
-
-- [ ] Supabase project created and configured
-- [ ] All migrations applied to database
-- [ ] Encryption key generated
-- [ ] Meta app credentials obtained
-- [ ] Environment variables set in Vercel
-- [ ] GitHub repository linked to Vercel
-- [ ] Domain configured (custom or Vercel default)
-- [ ] WhatsApp webhook configured
-- [ ] Test signup and WhatsApp message
-- [ ] Check error logs in Vercel Dashboard
-
-## Next Steps
-
-After deployment:
-
-1. Set a custom domain in Vercel **Settings → Domains**
-2. Enable auto-redeployments on GitHub push
-3. Set up monitoring: Vercel Analytics, error tracking (Sentry optional)
-4. Back up Supabase regularly
-
-For more help, see Vercel documentation: [vercel.com/docs](https://vercel.com/docs)
+Do not report a channel as connected until Meta has verified its account and the token has been stored successfully. Do not report a payment as active until a signed provider webhook confirms it.
