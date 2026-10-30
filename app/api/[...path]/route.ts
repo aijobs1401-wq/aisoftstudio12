@@ -346,7 +346,8 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
       verified_name: metaData.verified_name || null, connection_status: 'connected', updated_at: new Date().toISOString(),
     }, { onConflict: 'phone_number_id' }).select('*').single();
     if (error) throw new Error(error.message);
-    const { error: secretError } = await client.from('whatsapp_connection_secrets').upsert({
+    const adminDb = serviceClient();
+    const { error: secretError } = await adminDb.from('whatsapp_connection_secrets').upsert({
       connection_id: connection.id, token_ciphertext: tokenCiphertext, token_key_version: 1, updated_at: new Date().toISOString(),
     });
     if (secretError) throw new Error(secretError.message);
