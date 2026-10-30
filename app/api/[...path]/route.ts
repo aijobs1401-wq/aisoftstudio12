@@ -774,8 +774,9 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
 
   if (route === 'admin/overview' && method === 'GET') {
     const adminDb = await requireAdmin(ctx);
-    const [{ data: authUsers }, { data: orgs }, { data: bots }, { data: channels }, { data: plans }, { data: payments }, { data: logs }, { count: conversationCount }] = await Promise.all([
+    const [{ data: authUsers }, { data: profiles }, { data: orgs }, { data: bots }, { data: channels }, { data: plans }, { data: payments }, { data: logs }, { count: conversationCount }] = await Promise.all([
       adminDb.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+      adminDb.from('profiles').select('id,email,role,full_name'),
       adminDb.from('organizations').select('*').order('created_at', { ascending: false }),
       adminDb.from('ai_bots').select('*').order('created_at', { ascending: false }),
       adminDb.from('whatsapp_connections').select('*').order('created_at', { ascending: false }),
@@ -784,7 +785,11 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
       adminDb.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(100),
       adminDb.from('conversations').select('*', { count: 'exact', head: true }),
     ]);
-    const users = (authUsers?.users || []).map((u: any) => ({ id: u.id, email: u.email, name: u.user_metadata?.full_name || u.email, createdAt: u.created_at, status: u.email_confirmed_at ? 'confirmed' : 'pending' }));
+    const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
+    const users = (authUsers?.users || []).map((u: any) => {
+      const profile: any = profileMap.get(u.id) || {};
+      return { id: u.id, email: u.email, name: profile.full_name || u.user_metadata?.full_name || u.email, role: profile.role || 'viewer', createdAt: u.created_at, status: u.email_confirmed_at ? 'confirmed' : 'pending' };
+    });
     const workspaces = (orgs || []).map((o: any) => ({ id: o.id, name: o.name, status: o.status, createdAt: o.created_at }));
     const shapedBots = (bots || []).map(botShape);
     const shapedChannels = (channels || []).map((c: any) => ({ id: c.id, provider: 'whatsapp', phoneNumberId: c.phone_number_id, status: c.connection_status, createdAt: c.created_at }));
@@ -813,6 +818,45 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
     }).select('*').single();
     if (error) throw new Error(error.message);
     return json(data, 201);
+  }
+
+  if (path[0] === 'admin' && path[1] === 'users' && path[2] && method === 'PUT') {
+    const adminDb = await requireAdmin(ctx);
+    const role = String((body as any).role || '');
+    if (!['admin','editor','viewer'].includes(role)) return json({ error: 'Role must be admin, editor or viewer.' }, 400);
+    if (path[2] === ctx.user.id && role !== 'admin') return json({ error: 'You cannot remove your own platform administrator access.' }, 400);
+    const { data, error } = await adminDb.from('profiles').update({ role, updated_at: new Date().toISOString() }).eq('id', path[2]).select('id,email,role').single();
+    if (error) throw new Error(error.message);
+    await adminDb.from('audit_logs').insert({ actor_id: ctx.user.id, action: 'admin.user_role_updated', entity_type: 'profile', entity_id: path[2], details: { role } });
+    return json(data);
+  }
+  if (path[0] === 'admin' && path[1] === 'workspaces' && path[2] && method === 'PUT') {
+    const adminDb = await requireAdmin(ctx);
+    const status = String((body as any).status || '');
+    if (!['active','suspended'].includes(status)) return json({ error: 'Workspace status must be active or suspended.' }, 400);
+    const { data, error } = await adminDb.from('organizations').update({ status }).eq('id', path[2]).select('*').single();
+    if (error) throw new Error(error.message);
+    await adminDb.from('audit_logs').insert({ actor_id: ctx.user.id, organization_id: path[2], action: 'admin.workspace_status_updated', entity_type: 'organization', entity_id: path[2], details: { status } });
+    return json(data);
+  }
+  if (path[0] === 'admin' && path[1] === 'plans' && path[2] && method === 'PUT') {
+    const adminDb = await requireAdmin(ctx);
+    const updates: any = { updated_at: new Date().toISOString() };
+    if ((body as any).price !== undefined) updates.price = Number((body as any).price);
+    if ((body as any).botsLimit !== undefined) updates.bots_limit = Number((body as any).botsLimit);
+    if ((body as any).messagesLimit !== undefined) updates.messages_limit = Number((body as any).messagesLimit);
+    if ((body as any).apiLimit !== undefined) updates.api_limit = Number((body as any).apiLimit);
+    if ((body as any).isActive !== undefined) updates.is_active = Boolean((body as any).isActive);
+    const { data, error } = await adminDb.from('plans').update(updates).eq('id', path[2]).select('*').single();
+    if (error) throw new Error(error.message);
+    await adminDb.from('audit_logs').insert({ actor_id: ctx.user.id, action: 'admin.plan_updated', entity_type: 'plan', entity_id: path[2], details: updates });
+    return json(data);
+  }
+  if (path[0] === 'admin' && path[1] === 'plans' && path[2] && method === 'DELETE') {
+    const adminDb = await requireAdmin(ctx);
+    const { error } = await adminDb.from('plans').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', path[2]);
+    if (error) throw new Error(error.message);
+    return json({ success: true });
   }
 
   return json({ error: `API route not found: ${method} /api/${route}` }, 404);
