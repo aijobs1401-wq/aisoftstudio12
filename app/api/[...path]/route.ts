@@ -774,7 +774,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
 
   if (route === 'admin/overview' && method === 'GET') {
     const adminDb = await requireAdmin(ctx);
-    const [{ data: authUsers }, { data: profiles }, { data: orgs }, { data: bots }, { data: channels }, { data: plans }, { data: payments }, { data: logs }, { count: conversationCount }] = await Promise.all([
+    const [{ data: authUsers }, { data: profiles }, { data: orgs }, { data: bots }, { data: channels }, { data: plans }, { data: payments }, { data: logs }, { data: subscriptions }, { count: conversationCount }] = await Promise.all([
       adminDb.auth.admin.listUsers({ page: 1, perPage: 1000 }),
       adminDb.from('profiles').select('id,email,role,full_name'),
       adminDb.from('organizations').select('*').order('created_at', { ascending: false }),
@@ -783,6 +783,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
       adminDb.from('plans').select('*').order('price'),
       adminDb.from('payments').select('*').order('created_at', { ascending: false }),
       adminDb.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(100),
+      adminDb.from('subscriptions').select('*'),
       adminDb.from('conversations').select('*', { count: 'exact', head: true }),
     ]);
     const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
@@ -790,7 +791,10 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
       const profile: any = profileMap.get(u.id) || {};
       return { id: u.id, email: u.email, name: profile.full_name || u.user_metadata?.full_name || u.email, role: profile.role || 'viewer', createdAt: u.created_at, status: u.email_confirmed_at ? 'confirmed' : 'pending' };
     });
-    const workspaces = (orgs || []).map((o: any) => ({ id: o.id, name: o.name, status: o.status, createdAt: o.created_at }));
+    const workspaces = (orgs || []).map((o: any) => {
+      const subscription = (subscriptions || []).find((item: any) => item.organization_id === o.id);
+      return { id: o.id, name: o.name, plan: subscription?.plan_name || 'Starter', status: o.status, createdAt: o.created_at };
+    });
     const shapedBots = (bots || []).map(botShape);
     const shapedChannels = (channels || []).map((c: any) => ({ id: c.id, provider: 'whatsapp', phoneNumberId: c.phone_number_id, status: c.connection_status, createdAt: c.created_at }));
     const shapedPlans = (plans || []).map((p: any) => ({ id: p.id, name: p.name, amount: p.price, status: p.is_active ? 'active' : 'inactive', createdAt: p.created_at }));
