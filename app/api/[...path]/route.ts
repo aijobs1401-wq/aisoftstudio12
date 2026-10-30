@@ -340,7 +340,7 @@ async function listConversations(client: SupabaseClient, organizationId: string)
     contactIds.length ? client.from('contacts').select('*').in('id', contactIds) : Promise.resolve({ data: [] } as any),
     ids.length ? client.from('messages').select('*').in('conversation_id', ids).order('occurred_at') : Promise.resolve({ data: [] } as any),
   ]);
-  const contactMap = new Map((contacts || []).map((c: any) => [c.id, c]));
+  const contactMap = new Map((contacts || []).map((c: any) => [c.id, c] as const));
   const messagesByConversation = new Map<string, any[]>();
   for (const message of messages || []) {
     const list = messagesByConversation.get(message.conversation_id) || [];
@@ -786,7 +786,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
       adminDb.from('subscriptions').select('*'),
       adminDb.from('conversations').select('*', { count: 'exact', head: true }),
     ]);
-    const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
+    const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile] as const));
     const users = (authUsers?.users || []).map((u: any) => {
       const profile: any = profileMap.get(u.id) || {};
       return { id: u.id, email: u.email, name: profile.full_name || u.user_metadata?.full_name || u.email, role: profile.role || 'viewer', createdAt: u.created_at, status: u.email_confirmed_at ? 'confirmed' : 'pending' };
