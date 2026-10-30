@@ -44,7 +44,7 @@ function botShape(bot: any) {
   };
 }
 
-async function contextFor(request: NextRequest): Promise<ApiContext> {
+async function contextFor(request: NextRequest, bodyWorkspaceId = ''): Promise<ApiContext> {
   if (!supabaseUrl || !publicKey) throw new Error('Supabase URL or publishable key is missing on the server.');
   const bearer = request.headers.get('authorization') || '';
   const accessToken = bearer.replace(/^Bearer\s+/i, '');
@@ -61,7 +61,7 @@ async function contextFor(request: NextRequest): Promise<ApiContext> {
     client.from('organization_members').select('organization_id,role').eq('user_id', user.id),
   ]);
   if (memberError) throw new Error(memberError.message);
-  const requestedOrg = request.nextUrl.searchParams.get('workspaceId');
+  const requestedOrg = request.nextUrl.searchParams.get('workspaceId') || bodyWorkspaceId || null;
   const membership = (memberships || []).find((m: any) => m.organization_id === requestedOrg) || (memberships || [])[0];
   if (!membership) throw new Error('No workspace is assigned to this account yet.');
   if (requestedOrg && membership.organization_id !== requestedOrg) throw new Error('You do not have access to this workspace.');
@@ -514,7 +514,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
     });
   }
 
-  const ctx = await contextFor(request);
+  const ctx = await contextFor(request, String((body as any).workspaceId || ''));
   const orgId = ctx.organizationId;
   const client = ctx.client;
   const workspaceId = request.nextUrl.searchParams.get('workspaceId');
