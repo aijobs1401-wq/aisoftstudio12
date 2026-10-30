@@ -372,9 +372,6 @@ export default function App() {
             <BillingView subscription={subscription} workspaceId={selectedWorkspace} onRefresh={() => loadWorkspaceData(selectedWorkspace)} />
           )}
 
-          {activeTab === 'admin' && user?.role === 'master_admin' && (
-            <MasterAdminView adminData={adminData} />
-          )}
         </div>
       </main>
     </div>
