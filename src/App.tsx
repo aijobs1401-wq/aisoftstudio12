@@ -5,7 +5,9 @@ import {
   Plus, Settings, Send, Copy, Check, QrCode, Phone, Share2, RefreshCw, 
   ExternalLink, LogOut, Sparkles, AlertCircle, CheckCircle2, ChevronRight,
   HelpCircle, Trash2, Edit3, Eye, Smartphone, Laptop, Search, Lock,
-  Menu, X, ArrowRight, ShieldCheck, Zap, Code, Terminal, Camera as Instagram, MessageCircle as Facebook
+  Menu, X, ArrowRight, ShieldCheck, Zap, Code, Terminal, Camera as Instagram, MessageCircle as Facebook,
+  LayoutDashboard, Building2, Plug, Package, Wallet, Activity, Server, Webhook,
+  FileText, BarChart3, ArrowUpRight, ChevronDown, CircleDot
 } from 'lucide-react';
 
 export default function App() {
@@ -183,6 +185,24 @@ export default function App() {
         onLogin={login}
         onRegister={register}
         authMessage={authMessage}
+      />
+    );
+  }
+
+  if (user?.role === 'master_admin' && activeTab === 'admin') {
+    return (
+      <MasterAdminConsole
+        adminData={adminData}
+        user={user}
+        onExit={() => setActiveTab('overview')}
+        onRefresh={async () => {
+          try {
+            const response = await fetch('/api/admin/overview');
+            if (response.ok) setAdminData(await response.json());
+          } catch (error) {
+            console.error('Admin refresh failed:', error);
+          }
+        }}
       />
     );
   }
@@ -1589,34 +1609,153 @@ function PlanCard({ title, price, bots, messages, popular, onSelect }: any) {
 // -------------------------------------------------------------------------
 // MASTER ADMIN PANEL
 // -------------------------------------------------------------------------
-function MasterAdminView({ adminData }: any) {
-  if (!adminData) return <div className="text-zinc-400 text-xs">Loading admin data...</div>;
+function MasterAdminConsole({ adminData, user, onExit, onRefresh }: any) {
+  const [section, setSection] = useState('overview');
+  const [query, setQuery] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  const sections = [
+    { id: 'overview', label: 'Command Overview', icon: <LayoutDashboard className="h-4 w-4" />, group: 'PLATFORM' },
+    { id: 'customers', label: 'Customer Accounts', icon: <Users className="h-4 w-4" />, group: 'PLATFORM' },
+    { id: 'workspaces', label: 'Workspaces', icon: <Building2 className="h-4 w-4" />, group: 'PLATFORM' },
+    { id: 'integrations', label: 'Integration Control', icon: <Plug className="h-4 w-4" />, group: 'PLATFORM' },
+    { id: 'plans', label: 'Plans & Entitlements', icon: <Package className="h-4 w-4" />, group: 'COMMERCE' },
+    { id: 'payments', label: 'Payments & Revenue', icon: <Wallet className="h-4 w-4" />, group: 'COMMERCE' },
+    { id: 'bots', label: 'AI Fleet', icon: <Bot className="h-4 w-4" />, group: 'OPERATIONS' },
+    { id: 'monitoring', label: 'System Activity', icon: <Activity className="h-4 w-4" />, group: 'OPERATIONS' },
+    { id: 'settings', label: 'Platform Settings', icon: <Settings className="h-4 w-4" />, group: 'CONTROL' },
+  ];
+
+  const count = (key: string) => Array.isArray(adminData?.[key]) ? adminData[key].length.toLocaleString() : '—';
+  const metric = (key: string) => Number.isFinite(Number(adminData?.[key])) ? Number(adminData[key]).toLocaleString() : '—';
+  const rows = (key: string) => Array.isArray(adminData?.[key]) ? adminData[key] : [];
+  const filtered = (items: any[]) => items.filter((item) => JSON.stringify(item).toLowerCase().includes(query.toLowerCase()));
+  const logs = rows('logs').slice().reverse().slice(0, 8);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    await onRefresh?.();
+    setRefreshing(false);
+  };
+
+  const title = sections.find((item) => item.id === section)?.label || 'Command Overview';
+
+  const StatCard = ({ label, value, detail, icon }: any) => (
+    <div className="rounded-2xl border border-white/10 bg-[#15191f] p-5 shadow-[0_12px_40px_rgba(0,0,0,.18)]">
+      <div className="mb-4 flex items-center justify-between">
+        <span className="text-xs font-medium uppercase tracking-[.14em] text-zinc-500">{label}</span>
+        <span className="rounded-xl border border-orange-400/20 bg-orange-400/10 p-2 text-orange-300">{icon}</span>
+      </div>
+      <div className="text-3xl font-semibold tracking-tight text-white">{value}</div>
+      <div className="mt-2 text-xs text-zinc-500">{detail}</div>
+    </div>
+  );
+
+  const Table = ({ columns, data, empty }: any) => (
+    <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#15191f]">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-left text-sm">
+          <thead className="bg-white/[.035] text-[10px] uppercase tracking-[.14em] text-zinc-500">
+            <tr>{columns.map((column: string) => <th key={column} className="px-5 py-4 font-semibold">{column}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-white/[.06]">
+            {data.length ? data.map((item: any, index: number) => (
+              <tr key={item.id || item.email || index} className="hover:bg-white/[.025]">
+                {columns.map((column: string, cell: number) => {
+                  const keys: any = {
+                    'Account / Name': item.name || item.full_name || item.email || item.id,
+                    'Email': item.email || '—',
+                    'Workspace': item.name || item.workspaceName || item.id,
+                    'Plan': item.plan || item.planName || '—',
+                    'Status': item.status || item.state || '—',
+                    'Created': item.createdAt || item.created_at || item.timestamp || '—',
+                    'Channel': item.provider || item.channel || item.type || '—',
+                    'Account ID': item.phoneNumberId || item.pageId || item.accountId || item.id || '—',
+                    'Bot': item.name || item.botName || item.id,
+                    'Model': item.model || item.defaultModel || '—',
+                    'Amount': item.amount || item.total || item.price || '—',
+                    'Event': item.message || item.event || item.id,
+                  };
+                  const value = keys[column] ?? '—';
+                  return <td key={column} className={cell === 0 ? "px-5 py-4 font-medium text-zinc-200" : "px-5 py-4 text-zinc-400"}>{String(value)}</td>;
+                })}
+              </tr>
+            )) : <tr><td colSpan={columns.length} className="px-5 py-12 text-center text-sm text-zinc-500">{empty || 'No records are available from the platform API yet.'}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="space-y-6">
-      <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 text-amber-300 text-xs flex items-center gap-3">
-        <ShieldAlert className="w-5 h-5 flex-shrink-0" />
-        <p>Master Admin Panel: Viewing global platform metrics, registered users, workspaces, and system logs across all tenants.</p>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        <MetricCard title="Total Users" value={adminData.totalUsers} icon={<Users className="w-5 h-5 text-blue-500" />} sub="All registered accounts" />
-        <MetricCard title="Workspaces" value={adminData.totalWorkspaces} icon={<Globe className="w-5 h-5 text-orange-500" />} sub="Active tenants" />
-        <MetricCard title="Total Bots" value={adminData.totalBots} icon={<Bot className="w-5 h-5 text-emerald-500" />} sub="Deployed AI assistants" />
-        <MetricCard title="Conversations" value={adminData.totalConversations} icon={<MessageSquare className="w-5 h-5 text-purple-500" />} sub="All customer interactions" />
-      </div>
-
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-        <h3 className="text-sm font-bold text-white mb-4">Platform System Logs</h3>
-        <div className="space-y-2 font-mono text-[11px]">
-          {adminData.logs?.map((l: any) => (
-            <div key={l.id} className="p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg flex items-center justify-between">
-              <span className="text-zinc-300">{l.message}</span>
-              <span className="text-zinc-500">{new Date(l.timestamp).toLocaleTimeString()}</span>
+    <div className="min-h-screen bg-[#0c0f13] text-zinc-100">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[270px] flex-col border-r border-white/[.08] bg-[#11151a] lg:flex">
+        <div className="flex h-[82px] items-center gap-3 border-b border-white/[.08] px-6">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-amber-300 text-sm font-black text-black shadow-lg shadow-orange-500/20">AI</div>
+          <div><div className="text-sm font-extrabold tracking-wide text-white">AI SOFT STUDIO</div><div className="mt-0.5 text-[9px] font-bold tracking-[.22em] text-orange-300">OWNER CONSOLE</div></div>
+        </div>
+        <div className="px-5 pt-6">
+          <div className="rounded-xl border border-orange-400/20 bg-orange-400/[.07] p-3">
+            <div className="flex items-center gap-2 text-[10px] font-bold tracking-[.16em] text-orange-200"><ShieldCheck className="h-4 w-4" /> PRIVILEGED ACCESS</div>
+            <div className="mt-2 truncate text-xs text-zinc-300">{user?.email}</div>
+          </div>
+        </div>
+        <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-6">
+          {['PLATFORM','COMMERCE','OPERATIONS','CONTROL'].map((group) => (
+            <div key={group}>
+              <div className="mb-2 px-3 text-[9px] font-bold tracking-[.2em] text-zinc-600">{group}</div>
+              <div className="space-y-1">
+                {sections.filter((item) => item.group === group).map((item) => (
+                  <button key={item.id} onClick={() => { setSection(item.id); setQuery(''); }} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-xs font-medium transition ${section === item.id ? 'border border-orange-400/20 bg-orange-400/10 text-orange-200' : 'text-zinc-400 hover:bg-white/[.04] hover:text-white'}`}>
+                    {item.icon}<span>{item.label}</span>{section === item.id && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-orange-300" />}
+                  </button>
+                ))}
+              </div>
             </div>
           ))}
+        </nav>
+        <div className="border-t border-white/[.08] p-4">
+          <button onClick={onExit} className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-3 py-3 text-xs font-semibold text-zinc-300 transition hover:border-orange-400/30 hover:text-white"><ArrowRight className="h-4 w-4 rotate-180" /> Return to Customer Workspace</button>
+          <div className="mt-3 text-center text-[9px] tracking-wider text-zinc-600">AI SOFT STUDIO • MASTER ADMIN</div>
         </div>
-      </div>
+      </aside>
+
+      <main className="lg:pl-[270px]">
+        <header className="sticky top-0 z-20 flex min-h-[82px] flex-wrap items-center justify-between gap-4 border-b border-white/[.08] bg-[#0c0f13]/90 px-5 py-4 backdrop-blur-xl lg:px-9">
+          <div><div className="text-[10px] font-bold tracking-[.2em] text-orange-300">MASTER CONTROL / {section.toUpperCase()}</div><h1 className="mt-1 text-xl font-semibold tracking-tight text-white">{title}</h1></div>
+          <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-2 rounded-xl border border-white/10 bg-white/[.03] px-3 py-2 sm:flex"><Search className="h-4 w-4 text-zinc-500"/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search platform records..." className="w-48 bg-transparent text-xs text-white outline-none placeholder:text-zinc-600"/></div>
+            <button onClick={refresh} disabled={refreshing} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[.04] px-3 py-2.5 text-xs font-semibold text-zinc-300 hover:bg-white/[.08] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`}/> Refresh</button>
+            <div className="hidden h-9 w-9 items-center justify-center rounded-full border border-orange-300/20 bg-orange-300/10 text-xs font-bold text-orange-200 sm:flex">{(user?.name || user?.email || 'A').slice(0,1).toUpperCase()}</div>
+          </div>
+        </header>
+
+        <div className="mx-auto max-w-[1500px] space-y-7 p-5 lg:p-9">
+          {section === 'overview' && <>
+            <div className="flex flex-wrap items-end justify-between gap-3"><div><div className="text-sm text-zinc-400">Good to see you, platform owner.</div><h2 className="mt-1 text-2xl font-semibold text-white">Platform command overview</h2><p className="mt-2 text-xs text-zinc-500">Global operations across every customer workspace and connected channel.</p></div><div className="rounded-xl border border-emerald-400/20 bg-emerald-400/[.06] px-3 py-2 text-[10px] font-semibold tracking-wider text-emerald-300"><CircleDot className="mr-2 inline h-3 w-3"/> ADMIN SESSION ACTIVE</div></div>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="Registered Customers" value={metric('totalUsers')} detail="All platform accounts" icon={<Users className="h-4 w-4"/>}/>
+              <StatCard label="Customer Workspaces" value={metric('totalWorkspaces')} detail="Tenant environments" icon={<Building2 className="h-4 w-4"/>}/>
+              <StatCard label="AI Assistants" value={metric('totalBots')} detail="Bots across all workspaces" icon={<Bot className="h-4 w-4"/>}/>
+              <StatCard label="Conversations" value={metric('totalConversations')} detail="Platform-wide message threads" icon={<MessageSquare className="h-4 w-4"/>}/>
+            </div>
+            <div className="grid gap-5 xl:grid-cols-[1.5fr_1fr]">
+              <section className="rounded-2xl border border-white/10 bg-[#15191f] p-5"><div className="mb-5 flex items-center justify-between"><div><h3 className="text-sm font-semibold text-white">Platform inventory</h3><p className="mt-1 text-xs text-zinc-500">Live records returned by the admin API</p></div><Database className="h-5 w-5 text-orange-300"/></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{[{label:'Customers',value:count('users')},{label:'Workspaces',value:count('workspaces')},{label:'Bots',value:count('bots')},{label:'Channels',value:count('channels')},{label:'Plans',value:count('plans')},{label:'Payments',value:count('payments')}].map((item)=><div key={item.label} className="rounded-xl bg-white/[.035] p-4"><div className="text-[10px] uppercase tracking-wider text-zinc-500">{item.label}</div><div className="mt-2 text-xl font-semibold text-zinc-100">{item.value}</div></div>)}</div></section>
+              <section className="rounded-2xl border border-white/10 bg-[#15191f] p-5"><div className="mb-4 flex items-center justify-between"><div><h3 className="text-sm font-semibold text-white">Recent system activity</h3><p className="mt-1 text-xs text-zinc-500">Latest recorded platform events</p></div><Activity className="h-5 w-5 text-orange-300"/></div>{logs.length ? <div className="space-y-3">{logs.map((log:any)=><div key={log.id} className="flex gap-3 border-b border-white/[.06] pb-3 last:border-0"><span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-orange-300"/><div className="min-w-0"><div className="text-xs text-zinc-300">{log.message}</div><div className="mt-1 text-[10px] text-zinc-600">{log.timestamp ? new Date(log.timestamp).toLocaleString() : 'Timestamp unavailable'}</div></div></div>)}</div> : <div className="rounded-xl bg-white/[.03] p-5 text-xs text-zinc-500">No system activity records were returned.</div>}</section>
+            </div>
+            <section className="rounded-2xl border border-orange-400/15 bg-gradient-to-r from-orange-400/[.08] to-transparent p-5"><div className="flex items-start gap-3"><ShieldAlert className="mt-0.5 h-5 w-5 text-orange-300"/><div><h3 className="text-sm font-semibold text-white">Owner-level control</h3><p className="mt-1 max-w-3xl text-xs leading-6 text-zinc-400">Use this console to supervise customer accounts, workspaces, channel connections, plans, payments and AI operations. Sensitive Meta credentials and provider tokens must remain server-side and must never be displayed in this dashboard.</p></div></div></section>
+          </>}
+
+          {section === 'customers' && <><div><h2 className="text-lg font-semibold text-white">Customer accounts</h2><p className="mt-1 text-xs text-zinc-500">Platform-wide account directory.</p></div><Table columns={['Account / Name','Email','Status','Created']} data={filtered(rows('users'))} empty="No customer account records returned by the admin API."/></>}
+          {section === 'workspaces' && <><div><h2 className="text-lg font-semibold text-white">Workspace registry</h2><p className="mt-1 text-xs text-zinc-500">Tenant inventory and subscription assignment.</p></div><Table columns={['Workspace','Plan','Status','Created']} data={filtered(rows('workspaces'))} empty="No workspace records returned by the admin API."/></>}
+          {section === 'integrations' && <><div><h2 className="text-lg font-semibold text-white">Channel integration control</h2><p className="mt-1 text-xs text-zinc-500">Review customer channel connections. Provider configuration is managed securely on the backend.</p></div><div className="grid gap-4 md:grid-cols-3">{[{name:'WhatsApp Cloud API',icon:<Smartphone className="h-5 w-5"/>,provider:'whatsapp'},{name:'Instagram Messaging',icon:<Instagram className="h-5 w-5"/>,provider:'instagram'},{name:'Facebook Messenger',icon:<Facebook className="h-5 w-5"/>,provider:'messenger'}].map((channel)=><div key={channel.provider} className="rounded-2xl border border-white/10 bg-[#15191f] p-5"><div className="flex items-center justify-between"><span className="rounded-xl bg-orange-400/10 p-3 text-orange-200">{channel.icon}</span><span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">Connection records</span></div><h3 className="mt-4 text-sm font-semibold text-white">{channel.name}</h3><p className="mt-1 text-xs text-zinc-500">Customer accounts detected: {rows('channels').filter((item:any)=>(item.provider || item.channel || '').toLowerCase().includes(channel.provider)).length}</p></div>)}</div><Table columns={['Channel','Account ID','Status','Created']} data={filtered(rows('channels'))} empty="No connected channel records were returned. No provider is being reported as live without verified data."/></>}
+          {section === 'plans' && <><div><h2 className="text-lg font-semibold text-white">Plans & entitlements</h2><p className="mt-1 text-xs text-zinc-500">Current plan catalogue from platform storage.</p></div><Table columns={['Account / Name','Amount','Status','Created']} data={filtered(rows('plans'))} empty="No plan records returned by the admin API."/></>}
+          {section === 'payments' && <><div><h2 className="text-lg font-semibold text-white">Payments & revenue records</h2><p className="mt-1 text-xs text-zinc-500">Payment records currently available to the admin API.</p></div><Table columns={['Account / Name','Amount','Status','Created']} data={filtered(rows('payments'))} empty="No payment records returned by the admin API."/></>}
+          {section === 'bots' && <><div><h2 className="text-lg font-semibold text-white">AI assistant fleet</h2><p className="mt-1 text-xs text-zinc-500">Bots deployed across customer workspaces.</p></div><Table columns={['Bot','Model','Status','Created']} data={filtered(rows('bots'))} empty="No AI bot records returned by the admin API."/></>}
+          {section === 'monitoring' && <><div><h2 className="text-lg font-semibold text-white">System activity & audit trail</h2><p className="mt-1 text-xs text-zinc-500">Administrative and operational events.</p></div><Table columns={['Event','Status','Created']} data={filtered(rows('logs'))} empty="No system log records returned by the admin API."/></>}
+          {section === 'settings' && <><div><h2 className="text-lg font-semibold text-white">Platform configuration</h2><p className="mt-1 text-xs text-zinc-500">Current AI defaults returned by the admin service.</p></div><div className="grid gap-4 md:grid-cols-2"><div className="rounded-2xl border border-white/10 bg-[#15191f] p-5"><div className="text-xs text-zinc-500">Default AI model</div><div className="mt-2 text-lg font-semibold text-white">{adminData?.aiConfig?.defaultModel || 'Not configured'}</div></div><div className="rounded-2xl border border-white/10 bg-[#15191f] p-5"><div className="text-xs text-zinc-500">Max tokens</div><div className="mt-2 text-lg font-semibold text-white">{adminData?.aiConfig?.maxTokens ?? 'Not configured'}</div></div><div className="rounded-2xl border border-white/10 bg-[#15191f] p-5"><div className="text-xs text-zinc-500">Temperature</div><div className="mt-2 text-lg font-semibold text-white">{adminData?.aiConfig?.temperature ?? 'Not configured'}</div></div><div className="rounded-2xl border border-white/10 bg-[#15191f] p-5"><div className="text-xs text-zinc-500">API credential handling</div><div className="mt-2 text-sm font-semibold text-emerald-300">Server-side only</div></div></div></>}
+        </div>
+      </main>
     </div>
   );
 }
