@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -93,6 +93,144 @@ function encryptToken(token: string) {
   return [iv.toString('base64'), cipher.getAuthTag().toString('base64'), encrypted.toString('base64')].join(':');
 }
 
+function decryptToken(value: string) {
+  const [ivValue, tagValue, encryptedValue] = value.split(':');
+  if (!ivValue || !tagValue || !encryptedValue) throw new Error('Stored WhatsApp token has an invalid encrypted format.');
+  const decipher = createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(ivValue, 'base64'));
+  decipher.setAuthTag(Buffer.from(tagValue, 'base64'));
+  return Buffer.concat([decipher.update(Buffer.from(encryptedValue, 'base64')), decipher.final()]).toString('utf8');
+}
+
+async function processWhatsAppWebhook(request: NextRequest) {
+  if (request.method === 'GET') {
+    const mode = request.nextUrl.searchParams.get('hub.mode');
+    const token = request.nextUrl.searchParams.get('hub.verify_token') || '';
+    const challenge = request.nextUrl.searchParams.get('hub.challenge') || '';
+    const expected = process.env.META_WEBHOOK_VERIFY_TOKEN || '';
+    if (mode === 'subscribe' && expected && token === expected) {
+      return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } });
+    }
+    return json({ error: 'Webhook verification token mismatch.' }, 403);
+  }
+
+  const rawBody = await request.text();
+  const appSecret = process.env.META_APP_SECRET || '';
+  const signature = request.headers.get('x-hub-signature-256') || '';
+  if (!appSecret) return json({ error: 'META_APP_SECRET is not configured.' }, 503);
+  const expectedSignature = 'sha256=' + createHmac('sha256', appSecret).update(rawBody).digest('hex');
+  const signatureBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (signatureBuffer.length !== expectedBuffer.length || !timingSafeEqual(signatureBuffer, expectedBuffer)) {
+    return json({ error: 'Invalid Meta webhook signature.' }, 401);
+  }
+
+  let payload: any;
+  try { payload = JSON.parse(rawBody); } catch { return json({ error: 'Invalid webhook JSON.' }, 400); }
+  const adminDb = serviceClient();
+  const version = process.env.META_GRAPH_API_VERSION || 'v23.0';
+  for (const entry of payload.entry || []) {
+    for (const change of entry.changes || []) {
+      if (change.field !== 'messages') continue;
+      const value = change.value || {};
+      const phoneNumberId = value.metadata?.phone_number_id;
+      if (!phoneNumberId) continue;
+      const { data: connection } = await adminDb.from('whatsapp_connections').select('*')
+        .eq('phone_number_id', phoneNumberId).maybeSingle();
+      if (!connection) continue;
+      await adminDb.from('whatsapp_connections').update({ last_webhook_at: new Date().toISOString() }).eq('id', connection.id);
+
+      for (const inbound of value.messages || []) {
+        const eventKey = inbound.id || `wa-${phoneNumberId}-${inbound.timestamp || Date.now()}`;
+        const { data: acceptedEvent } = await adminDb.from('webhook_events').upsert({
+          event_key: eventKey, payload: { phone_number_id: phoneNumberId, message: inbound },
+          processing_status: 'pending',
+        }, { onConflict: 'event_key', ignoreDuplicates: true }).select('event_key').maybeSingle();
+        if (!acceptedEvent) continue;
+
+        const sender = String(inbound.from || '');
+        if (!sender) continue;
+        const profileName = value.contacts?.find((item: any) => item.wa_id === sender)?.profile?.name || 'WhatsApp contact';
+        const { data: existingContact } = await adminDb.from('contacts').select('*')
+          .eq('organization_id', connection.organization_id).eq('wa_id', sender).maybeSingle();
+        let contact = existingContact;
+        if (!contact) {
+          const { data } = await adminDb.from('contacts').insert({
+            organization_id: connection.organization_id, wa_id: sender, name: profileName,
+          }).select('*').single();
+          contact = data;
+        }
+        if (!contact) continue;
+        const now = new Date().toISOString();
+        const { data: conversation } = await adminDb.from('conversations').upsert({
+          organization_id: connection.organization_id, connection_id: connection.id,
+          contact_id: contact.id, status: 'open', last_message_at: now,
+        }, { onConflict: 'organization_id,contact_id,connection_id' }).select('*').single();
+        if (!conversation) continue;
+
+        const textBody = inbound.text?.body || inbound.button?.text || inbound.interactive?.button_reply?.title || inbound.interactive?.list_reply?.title || '[Unsupported message type]';
+        await adminDb.from('messages').insert({
+          organization_id: connection.organization_id, conversation_id: conversation.id,
+          meta_message_id: inbound.id || null, direction: 'inbound', message_type: inbound.type || 'text',
+          body: textBody, delivery_status: 'received',
+        });
+
+        const { data: aiSettings } = await adminDb.from('whatsapp_ai_settings').select('*')
+          .eq('organization_id', connection.organization_id).maybeSingle();
+        const openAiKey = process.env.OPENAI_API_KEY || '';
+        if (!aiSettings?.enabled || !openAiKey || inbound.type !== 'text') {
+          await adminDb.from('webhook_events').update({ processing_status: 'processed', processed_at: new Date().toISOString() }).eq('event_key', eventKey);
+          continue;
+        }
+
+        const { data: secret } = await adminDb.from('whatsapp_connection_secrets').select('token_ciphertext')
+          .eq('connection_id', connection.id).maybeSingle();
+        if (!secret?.token_ciphertext) {
+          await adminDb.from('webhook_events').update({ processing_status: 'failed', processed_at: new Date().toISOString() }).eq('event_key', eventKey);
+          continue;
+        }
+        const accessToken = decryptToken(secret.token_ciphertext);
+        const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: aiSettings.system_prompt || `You are ${aiSettings.bot_name}. Reply in the customer's language. Keep messages concise, factual and helpful. Never invent prices or order status.` },
+              { role: 'user', content: textBody },
+            ],
+            temperature: 0.4,
+          }),
+        });
+        const aiData = await aiResponse.json().catch(() => ({}));
+        const reply = aiResponse.ok ? String(aiData.choices?.[0]?.message?.content || '') : '';
+        if (reply) {
+          const sendResponse = await fetch(`https://graph.facebook.com/${version}/${phoneNumberId}/messages`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: sender, type: 'text', text: { body: reply } }),
+          });
+          const sendData = await sendResponse.json().catch(() => ({}));
+          if (sendResponse.ok) {
+            await adminDb.from('messages').insert({
+              organization_id: connection.organization_id, conversation_id: conversation.id,
+              meta_message_id: sendData.messages?.[0]?.id || null, direction: 'outbound',
+              message_type: 'text', body: reply, delivery_status: 'sent',
+            });
+          }
+        }
+        await adminDb.from('webhook_events').update({
+          processing_status: aiResponse.ok ? 'processed' : 'failed', processed_at: new Date().toISOString(),
+        }).eq('event_key', eventKey);
+      }
+
+      for (const status of value.statuses || []) {
+        if (status.id) await adminDb.from('messages').update({ delivery_status: status.status || 'sent' }).eq('meta_message_id', status.id);
+      }
+    }
+  }
+  return json({ status: 'ok' });
+}
+
 async function listConversations(client: SupabaseClient, organizationId: string) {
   const { data: rows, error } = await client.from('conversations').select('*')
     .eq('organization_id', organizationId).order('last_message_at', { ascending: false }).limit(200);
@@ -135,6 +273,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
   const path = (await params).path || [];
   const route = path.join('/');
   const method = request.method;
+  if (route === 'whatsapp/webhook') return processWhatsAppWebhook(request);
   const body = method === 'GET' || method === 'DELETE' ? {} : await request.json().catch(() => ({}));
 
   // Public chatbot discovery and chat endpoints are intentionally separate from dashboard auth.
