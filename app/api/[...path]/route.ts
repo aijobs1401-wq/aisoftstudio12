@@ -497,6 +497,43 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
     return json({ success: true });
   }
 
+  if (route === 'automations' && method === 'GET') {
+    const { data, error } = await client.from('automation_flows').select('*')
+      .eq('organization_id', workspaceId || orgId).order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return json((data || []).map((flow: any) => ({
+      id: flow.id, workspaceId: flow.organization_id, name: flow.name,
+      triggerType: flow.trigger_type, definition: flow.definition, status: flow.status, createdAt: flow.created_at,
+    })));
+  }
+  if (route === 'automations' && method === 'POST') {
+    const definition = (body as any).definition && typeof (body as any).definition === 'object' ? (body as any).definition : {};
+    const triggerType = ['incoming_message','keyword_match','new_lead'].includes((body as any).triggerType) ? (body as any).triggerType : 'incoming_message';
+    if (triggerType === 'keyword_match' && !String(definition.keyword || '').trim()) return json({ error: 'A keyword is required for keyword-match workflows.' }, 400);
+    const { data, error } = await client.from('automation_flows').insert({
+      organization_id: orgId, name: String((body as any).name || 'New automation'),
+      trigger_type: triggerType, definition, status: (body as any).status === 'active' ? 'active' : 'draft',
+      created_by: ctx.user.id,
+    }).select('*').single();
+    if (error) throw new Error(error.message);
+    await client.from('audit_logs').insert({ organization_id: orgId, actor_id: ctx.user.id, action: 'automation.created', entity_type: 'automation_flow', entity_id: data.id });
+    return json({ id: data.id, workspaceId: data.organization_id, name: data.name, triggerType: data.trigger_type, definition: data.definition, status: data.status, createdAt: data.created_at }, 201);
+  }
+  if (path[0] === 'automations' && path[1] && method === 'PUT') {
+    const updates: any = { updated_at: new Date().toISOString() };
+    if ((body as any).name !== undefined) updates.name = String((body as any).name);
+    if ((body as any).status !== undefined) updates.status = ['active','paused','draft'].includes((body as any).status) ? (body as any).status : 'draft';
+    if ((body as any).definition !== undefined) updates.definition = (body as any).definition;
+    const { data, error } = await client.from('automation_flows').update(updates).eq('id', path[1]).eq('organization_id', orgId).select('*').single();
+    if (error) throw new Error(error.message);
+    return json({ id: data.id, workspaceId: data.organization_id, name: data.name, triggerType: data.trigger_type, definition: data.definition, status: data.status, createdAt: data.created_at });
+  }
+  if (path[0] === 'automations' && path[1] && method === 'DELETE') {
+    const { error } = await client.from('automation_flows').delete().eq('id', path[1]).eq('organization_id', orgId);
+    if (error) throw new Error(error.message);
+    return json({ success: true });
+  }
+
   if (route === 'conversations' && method === 'GET') return json(await listConversations(client, workspaceId || orgId));
   if (path[0] === 'conversations' && path[1] && path[2] === 'reply' && method === 'POST') {
     const reply = String((body as any).text || '').trim().slice(0, 4000);
