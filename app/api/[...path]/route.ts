@@ -123,7 +123,7 @@ async function listConversations(client: SupabaseClient, organizationId: string)
       customerName: contact.name || 'WhatsApp contact',
       customerPhone: contact.wa_id || '',
       channel: row.connection_id ? 'whatsapp' : 'web_widget',
-      status: row.status,
+      status: row.status === 'pending' ? 'human_handover' : row.status,
       messages: messagesByConversation.get(row.id) || [],
       lastMessageAt: row.last_message_at,
       createdAt: row.created_at,
@@ -144,7 +144,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
     const action = parts[2];
     const adminDb = serviceClient();
     const { data: bot, error: botError } = await adminDb.from('ai_bots').select('*').eq('id', botId).maybeSingle();
-    if (botError || !bot || bot.status !== 'active' && action === 'public') return json({ error: 'Chatbot not found or inactive.' }, 404);
+    if (botError || !bot || bot.status !== 'active') return json({ error: 'Chatbot not found or inactive.' }, 404);
     if (action === 'public' && method === 'GET') {
       return json({
         id: bot.id, name: bot.name, welcomeMessage: bot.welcome_message,
@@ -307,7 +307,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
       message_type: 'text', body: reply, delivery_status: 'queued',
     });
     if (messageError) throw new Error(messageError.message);
-    const { data, error: updateError } = await client.from('conversations').update({ status: 'human_handover', last_message_at: new Date().toISOString() }).eq('id', path[1]).select('*').single();
+    const { data, error: updateError } = await client.from('conversations').update({ status: 'pending', last_message_at: new Date().toISOString() }).eq('id', path[1]).select('*').single();
     if (updateError) throw new Error(updateError.message);
     return json(data);
   }
@@ -339,6 +339,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
     const metaData = await metaResponse.json().catch(() => ({}));
     if (!metaResponse.ok) return json({ error: metaData.error?.message || 'Meta could not verify this WhatsApp Phone Number ID and token.' }, 400);
     const wabaId = metaData.whatsapp_business_account?.id || (body as any).wabaId || null;
+    if (!wabaId) return json({ error: 'Meta verified the phone number but did not return its WhatsApp Business Account ID. Use Embedded Signup or provide the WABA ID.' }, 400);
     const { data: connection, error } = await client.from('whatsapp_connections').upsert({
       organization_id: orgId, phone_number_id: phoneNumberId, waba_id: wabaId,
       display_phone_number: metaData.display_phone_number || null,
