@@ -7,10 +7,9 @@ This is a complete guide to deploy **WACRM** on Vercel.
 Before deploying, you need:
 
 1. **Vercel Account** — Sign up at [vercel.com](https://vercel.com)
-2. **GitHub Account** — Your code must be on GitHub (it already is at `parthkavad54/WACRM`)
-3. **Supabase Project** — Database & authentication backend
-4. **Meta App** — WhatsApp Business API credentials
-5. **Encryption Key** — For securing WhatsApp tokens
+2. **Supabase Project** — Database & authentication backend
+3. **Meta App** — WhatsApp Business API credentials
+4. **Encryption Key** — For securing WhatsApp tokens
 
 ## Step 1: Set Up Supabase
 
