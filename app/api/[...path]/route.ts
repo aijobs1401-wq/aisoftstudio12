@@ -65,6 +65,8 @@ async function contextFor(request: NextRequest, bodyWorkspaceId = ''): Promise<A
   const membership = (memberships || []).find((m: any) => m.organization_id === requestedOrg) || (memberships || [])[0];
   if (!membership) throw new Error('No workspace is assigned to this account yet.');
   if (requestedOrg && membership.organization_id !== requestedOrg) throw new Error('You do not have access to this workspace.');
+  const { data: organization } = await client.from('organizations').select('status').eq('id', membership.organization_id).maybeSingle();
+  if (organization?.status === 'suspended' && profile?.role !== 'admin') throw new Error('This workspace is suspended. Contact platform support.');
   return { client, user, profile: profile || {}, organizationId: membership.organization_id, membershipRole: membership.role };
 }
 
@@ -395,6 +397,8 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
       if (!message) return json({ error: 'Message is required.' }, 400);
       const apiKey = process.env.OPENAI_API_KEY || '';
       if (!apiKey) return json({ error: 'OPENAI_API_KEY is not configured on the server.' }, 503);
+      const { data: subscription } = await adminDb.from('subscriptions').select('messages_limit,messages_used').eq('organization_id', bot.organization_id).maybeSingle();
+      if (subscription && subscription.messages_used >= subscription.messages_limit) return json({ error: 'This workspace has reached its monthly AI message limit. Upgrade the plan to continue.' }, 429);
       const visitorId = String((body as any).customerPhone || (body as any).customerEmail || `web-${randomBytes(8).toString('hex')}`);
       let contact: any;
       const { data: existingContact } = await adminDb.from('contacts').select('*')
@@ -446,6 +450,9 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
       ]).select('*');
       if (saveError) return json({ error: saveError.message }, 500);
       await adminDb.from('conversations').update({ last_message_at: now }).eq('id', conversationId);
+      if (subscription) {
+        await adminDb.from('subscriptions').update({ messages_used: Number(subscription.messages_used || 0) + 1, updated_at: new Date().toISOString() }).eq('organization_id', bot.organization_id);
+      }
       if ((body as any).customerEmail || (body as any).customerPhone) {
         await adminDb.from('leads').insert({
           organization_id: bot.organization_id, bot_id: bot.id,
@@ -540,6 +547,11 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
     return json((data || []).map(botShape));
   }
   if (route === 'bots' && method === 'POST') {
+    const [{ data: subscription }, { count: botCount }] = await Promise.all([
+      client.from('subscriptions').select('bots_limit').eq('organization_id', orgId).maybeSingle(),
+      client.from('ai_bots').select('id', { count: 'exact', head: true }).eq('organization_id', orgId),
+    ]);
+    if (subscription && (botCount || 0) >= subscription.bots_limit) return json({ error: 'Your plan bot limit has been reached. Upgrade to create another assistant.' }, 403);
     const { data, error } = await client.from('ai_bots').insert({
       organization_id: orgId, name: (body as any).name || 'New AI Assistant',
       welcome_message: (body as any).welcomeMessage || 'Hello! How can I help you today?',
