@@ -930,11 +930,16 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBot) return;
-    await authenticatedFetch(`/api/bots/${selectedBot.id}`, {
+    const response = await authenticatedFetch(`/api/bots/${selectedBot.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, welcomeMessage, personality, language })
     });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      alert(result.error || 'Could not save chatbot configuration.');
+      return;
+    }
     onRefresh();
     alert('Chatbot configuration saved successfully!');
   };
@@ -1368,15 +1373,20 @@ function ChannelsView({ channels, workspaceId, onRefresh }: any) {
 
   const handleConnectWhatsApp = async (e: React.FormEvent) => {
     e.preventDefault();
-    await authenticatedFetch('/api/channels/whatsapp', {
+    const response = await authenticatedFetch('/api/channels/whatsapp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceId, phoneNumberId: phoneId, accessToken: token })
     });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      alert(result.error || 'WhatsApp connection failed. Check the Meta credentials and server configuration.');
+      return;
+    }
     setPhoneId('');
     setToken('');
     onRefresh();
-    alert('WhatsApp Cloud API connected successfully!');
+    alert('WhatsApp number verified and securely connected.');
   };
 
   return (
@@ -1484,6 +1494,10 @@ function ApiWidgetView({ apiKeys, bots, workspaceId, onRefresh }: any) {
       body: JSON.stringify({ workspaceId, name: newKeyName })
     });
     const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || 'Could not create API key.');
+      return;
+    }
     setGeneratedSecret(data.secretKey);
     setNewKeyName('');
     onRefresh();
@@ -1572,11 +1586,17 @@ function ApiWidgetView({ apiKeys, bots, workspaceId, onRefresh }: any) {
 // -------------------------------------------------------------------------
 function BillingView({ subscription, workspaceId, onRefresh }: any) {
   const handleUpgrade = async (planName: string) => {
-    await authenticatedFetch('/api/subscription/upgrade', {
+    const response = await authenticatedFetch('/api/subscription/upgrade', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceId, planName })
     });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      alert(result.error || 'Could not start the subscription payment.');
+      return;
+    }
+    alert(`Razorpay order created: ${result.orderId}. Payment checkout still needs to be completed.`);
     onRefresh();
     alert(`Successfully upgraded to ${planName} plan!`);
   };
