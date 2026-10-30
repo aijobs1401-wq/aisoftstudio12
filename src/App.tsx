@@ -831,7 +831,7 @@ function DashboardOverview({ bots, conversations, leads, subscription, onNavigat
         <MetricCard title="Active Bots" value={safeBots.length} icon={<Bot className="w-5 h-5 text-orange-500" />} sub={`Plan Limit: ${subscription?.botsLimit || 5}`} />
         <MetricCard title="Live Inquiries" value={activeConversations} icon={<MessageSquare className="w-5 h-5 text-amber-500" />} sub={`${totalMessages} total messages`} />
         <MetricCard title="Captured Leads" value={safeLeads.length} icon={<Database className="w-5 h-5 text-emerald-500" />} sub="Ready for sales team" />
-        <MetricCard title="Messages Quota" value={`${subscription?.messagesUsed || 0} / ${subscription?.messagesLimit || 10000}`} icon={<CreditCard className="w-5 h-5 text-purple-500" />} sub={`${subscription?.planName || 'Professional'} Plan`} />
+        <MetricCard title="Messages Quota" value={`${subscription?.messagesUsed || 0} / ${subscription?.messagesLimit || 10000}`} icon={<CreditCard className="w-5 h-5 text-purple-500" />} sub={`${subscription?.planName || 'Starter'} Plan`} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1795,9 +1795,37 @@ function BillingView({ subscription, workspaceId, onRefresh }: any) {
       alert(result.error || 'Could not start the subscription payment.');
       return;
     }
-    alert(`Razorpay order created: ${result.orderId}. Payment checkout still needs to be completed.`);
-    onRefresh();
-    alert(`Successfully upgraded to ${planName} plan!`);
+    try {
+      if (!(window as any).Razorpay) {
+        await new Promise<void>((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+          script.onload = () => resolve();
+          script.onerror = () => reject(new Error('Razorpay Checkout could not be loaded.'));
+          document.body.appendChild(script);
+        });
+      }
+      const checkout = new (window as any).Razorpay({
+        key: result.keyId,
+        amount: result.amount,
+        currency: result.currency,
+        name: 'AI SOFT STUDIO',
+        description: `${planName} subscription`,
+        order_id: result.orderId,
+        theme: { color: '#f97316' },
+        handler: () => {
+          alert('Payment submitted. Your plan will activate after Razorpay confirms the payment webhook.');
+          onRefresh();
+        },
+        modal: { ondismiss: () => onRefresh() },
+      });
+      checkout.on('payment.failed', (event: any) => {
+        alert(event.error?.description || 'Payment failed. No plan was activated.');
+      });
+      checkout.open();
+    } catch (error: any) {
+      alert(error.message || 'Could not open Razorpay Checkout.');
+    }
   };
 
   return (
@@ -1810,7 +1838,7 @@ function BillingView({ subscription, workspaceId, onRefresh }: any) {
             <p className="text-xs text-zinc-400">Bots Limit: {subscription?.botsLimit} • Messages: {subscription?.messagesUsed} / {subscription?.messagesLimit}</p>
           </div>
           <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-semibold">
-            Active
+            {subscription?.status || 'trial'}
           </span>
         </div>
 
