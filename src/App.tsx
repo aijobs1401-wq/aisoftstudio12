@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
 import { 
   Bot, MessageSquare, Users, Database, Globe, Key, CreditCard, ShieldAlert, 
   Plus, Settings, Send, Copy, Check, QrCode, Phone, Share2, RefreshCw, 
@@ -1096,12 +1095,7 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
             <div className="flex flex-col flex-1 overflow-hidden">
               <div className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl p-4 overflow-y-auto space-y-3 mb-3">
                 {chatMessages.map((m: any, idx: number) => (
-                  <motion.div 
-                    key={idx} 
-                    initial={{ opacity: 0, y: 15 }} 
-                    animate={{ opacity: 1, y: 0 }} 
-                    transition={{ duration: 0.25, ease: 'easeOut' }}
-                    className={`flex ${m.sender === 'customer' ? 'justify-end' : 'justify-start'}`}
+                  <div key={idx} className={`flex ${m.sender === 'customer' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div className={`max-w-[80%] p-3 rounded-2xl text-xs ${
                       m.sender === 'customer' 
@@ -1110,7 +1104,7 @@ function ChatbotStudio({ bots, selectedBot, setSelectedBot, workspaceId, onRefre
                     }`}>
                       {m.text}
                     </div>
-                  </motion.div>
+                  </div>
                 ))}
                 {isSending && (
                   <div className="flex justify-start">
@@ -1665,26 +1659,17 @@ function PublicChatView({ botId, isWidget }: any) {
 
       <div className="flex-1 p-4 overflow-y-auto space-y-3">
         {messages.map((m: any, idx: number) => (
-          <motion.div 
-            key={idx} 
-            initial={{ opacity: 0, y: 15 }} 
-            animate={{ opacity: 1, y: 0 }} 
-            transition={{ duration: 0.25, ease: 'easeOut' }}
-            className={`flex ${m.sender === 'customer' ? 'justify-end' : 'justify-start'}`}
+          <div key={idx} className={`flex ${m.sender === 'customer' ? 'justify-end' : 'justify-start'}`}
           >
-            <motion.div 
-              initial={{ opacity: 0, y: 15 }} 
-              animate={{ opacity: 1, y: 0 }} 
-              transition={{ duration: 0.25, ease: 'easeOut' }}
-              className={`max-w-[85%] p-3.5 rounded-2xl text-xs ${
+            <div className={`max-w-[85%] p-3.5 rounded-2xl text-xs ${
                 m.sender === 'customer' 
                   ? 'bg-orange-600 text-white rounded-br-none shadow-md' 
                   : 'bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-bl-none shadow-md'
               }`}
             >
               {m.text}
-            </motion.div>
-          </motion.div>
+            </div>
+          </div>
         ))}
       </div>
 
