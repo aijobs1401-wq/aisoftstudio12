@@ -694,7 +694,6 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
       token_expires_at: tokenData.expires_in ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString() : null,
     });
     if (secretError) throw new Error(secretError.message);
-    await adminDb.from('whatsapp_ai_settings').upsert({ organization_id: orgId, enabled: true, bot_name: 'AI Soft Studio Assistant', updated_by: ctx.user.id, updated_at: new Date().toISOString() }, { onConflict: 'organization_id' });
     return json({ id: connection.id, type: 'whatsapp', status: 'connected', displayPhoneNumber: connection.display_phone_number });
   }
 
