@@ -372,7 +372,8 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
   const path = (await params).path || [];
   const route = path.join('/');
   const method = request.method;
-  if (route === 'whatsapp/webhook') return processWhatsAppWebhook(request);\n  if (route === 'webhooks/payment') return processRazorpayWebhook(request);
+  if (route === 'whatsapp/webhook') return processWhatsAppWebhook(request);
+  if (route === 'webhooks/payment') return processRazorpayWebhook(request);
   const body = method === 'GET' || method === 'DELETE' ? {} : await request.json().catch(() => ({}));
 
   // Public chatbot discovery and chat endpoints are intentionally separate from dashboard auth.
