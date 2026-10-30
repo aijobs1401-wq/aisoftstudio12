@@ -901,7 +901,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
   if (path[0] === 'admin' && path[1] === 'channels' && path[2] && method === 'PUT') {
     const adminDb = await requireAdmin(ctx);
     const status = String((body as any).status || '');
-    if (!['connected','disconnected','error'].includes(status)) return json({ error: 'Invalid channel connection status.' }, 400);
+    if (!['disconnected','error'].includes(status)) return json({ error: 'A channel can only be marked disconnected or error by an admin. A connected state is set only after the provider OAuth / Embedded Signup succeeds.' }, 400);
     const { data, error } = await adminDb.from('whatsapp_connections').update({ connection_status: status, updated_at: new Date().toISOString() }).eq('id', path[2]).select('*').single();
     if (error) throw new Error(error.message);
     await adminDb.from('audit_logs').insert({ actor_id: ctx.user.id, organization_id: data.organization_id, action: 'admin.channel_status_updated', entity_type: 'whatsapp_connection', entity_id: path[2], details: { status } });
