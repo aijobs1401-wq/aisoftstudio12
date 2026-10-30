@@ -785,18 +785,59 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
   }
 
   if (route === 'admin/integrations' && method === 'GET') {
-    await requireAdmin(ctx);
+    const adminDb = await requireAdmin(ctx);
     const configured = (key: string) => Boolean(process.env[key]?.trim());
+    const version = process.env.META_GRAPH_API_VERSION || 'v23.0';
+    const appId = process.env.META_APP_ID || '';
+    const appSecret = process.env.META_APP_SECRET || '';
+    let metaApp: any = { status: 'not_configured', connected: false };
+    if (appId && appSecret) {
+      const response = await fetch(`https://graph.facebook.com/${version}/${encodeURIComponent(appId)}?fields=id,name`, {
+        headers: { Authorization: 'Bearer ' + appId + '|' + appSecret },
+      });
+      const result = await response.json().catch(() => ({}));
+      metaApp = response.ok
+        ? { status: 'connected', connected: true, appId: result.id || appId, appName: result.name || null }
+        : { status: 'error', connected: false, error: result.error?.message || 'Meta app credentials could not be verified.' };
+    }
+    const { data: channels, error: channelError } = await adminDb.from('whatsapp_connections')
+      .select('id,organization_id,waba_id,phone_number_id,display_phone_number,verified_name,connection_status,last_webhook_at,created_at')
+      .order('created_at', { ascending: false });
+    if (channelError) throw new Error(channelError.message);
+    const whatsappAccounts = await Promise.all((channels || []).map(async (channel: any) => {
+      const { data: secret } = await adminDb.from('whatsapp_connection_secrets').select('token_ciphertext')
+        .eq('connection_id', channel.id).maybeSingle();
+      let tokenValid = false, tokenError = '';
+      if (secret?.token_ciphertext) {
+        try {
+          const token = decryptToken(secret.token_ciphertext);
+          const check = await fetch(`https://graph.facebook.com/${version}/${encodeURIComponent(channel.phone_number_id)}?fields=id,display_phone_number,verified_name,whatsapp_business_account`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const details = await check.json().catch(() => ({}));
+          tokenValid = check.ok && String(details.id) === String(channel.phone_number_id);
+          if (!check.ok) tokenError = details.error?.message || 'Meta token verification failed.';
+        } catch (error: any) { tokenError = error.message || 'Saved access token could not be decrypted.'; }
+      }
+      return {
+        id: channel.id, workspaceId: channel.organization_id, wabaId: channel.waba_id,
+        phoneNumberId: channel.phone_number_id, displayPhoneNumber: channel.display_phone_number,
+        verifiedName: channel.verified_name, connectionStatus: channel.connection_status,
+        tokenValid, tokenError, lastWebhookAt: channel.last_webhook_at,
+        webhookStatus: channel.last_webhook_at ? 'received' : 'not_received',
+      };
+    }));
+    const validCount = whatsappAccounts.filter((item: any) => item.tokenValid).length;
     return json({
       webhookBaseUrl: process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || '',
       integrations: {
         openai: { configured: configured('OPENAI_API_KEY'), model: process.env.OPENAI_MODEL || 'gpt-4o-mini' },
-        meta: { configured: configured('META_APP_ID') && configured('META_APP_SECRET') && configured('META_EMBEDDED_SIGNUP_CONFIG_ID'), appIdConfigured: configured('META_APP_ID'), appSecretConfigured: configured('META_APP_SECRET'), signupConfigConfigured: configured('META_EMBEDDED_SIGNUP_CONFIG_ID'), webhookVerifyConfigured: configured('META_WEBHOOK_VERIFY_TOKEN'), encryptionConfigured: (() => { try { encryptionKey(); return true; } catch { return false; } })() },
+        meta: { configured: configured('META_APP_ID') && configured('META_APP_SECRET') && configured('META_EMBEDDED_SIGNUP_CONFIG_ID'), appIdConfigured: configured('META_APP_ID'), appSecretConfigured: configured('META_APP_SECRET'), signupConfigConfigured: configured('META_EMBEDDED_SIGNUP_CONFIG_ID'), webhookVerifyConfigured: configured('META_WEBHOOK_VERIFY_TOKEN'), encryptionConfigured: (() => { try { encryptionKey(); return true; } catch { return false; } })(), app: metaApp, whatsappAccountCount: whatsappAccounts.length, verifiedWhatsAppCount: validCount, whatsappAccounts },
         razorpay: { configured: configured('RAZORPAY_KEY_ID') && configured('RAZORPAY_KEY_SECRET'), webhookConfigured: configured('RAZORPAY_WEBHOOK_SECRET') },
       },
       webhookUrls: {
-        whatsapp: (process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://YOUR-RENDER-SERVICE.onrender.com') + '/api/whatsapp/webhook',
-        razorpay: (process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://YOUR-RENDER-SERVICE.onrender.com') + '/api/webhooks/payment',
+        whatsapp: (process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://aisoftstudio12.onrender.com') + '/api/whatsapp/webhook',
+        razorpay: (process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://aisoftstudio12.onrender.com') + '/api/webhooks/payment',
       },
     });
   }
