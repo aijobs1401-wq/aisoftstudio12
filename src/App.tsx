@@ -1432,7 +1432,7 @@ function ChannelsView({ channels, workspaceId, onRefresh }: any) {
       }
     };
     const onMessage = (event: MessageEvent) => {
-      if (!/^https:\/\/([a-z0-9-]+\\.)?facebook\\.com$/i.test(event.origin)) return;
+      if (!/^https:\/\/([a-z0-9-]+\.)?facebook\.com$/i.test(event.origin)) return;
       let data: any = event.data;
       if (typeof data === 'string') {
         try { data = JSON.parse(data); } catch { return; }
