@@ -1367,6 +1367,103 @@ function LeadsView({ leads }: any) {
 function ChannelsView({ channels, workspaceId, onRefresh }: any) {
   const [phoneId, setPhoneId] = useState('');
   const [token, setToken] = useState('');
+  const [metaConnecting, setMetaConnecting] = useState(false);
+
+  useEffect(() => {
+    const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+    if (!appId || (window as any).FB) return;
+    (window as any).fbAsyncInit = () => {
+      (window as any).FB.init({
+        appId,
+        cookie: true,
+        xfbml: false,
+        version: process.env.NEXT_PUBLIC_META_GRAPH_API_VERSION || 'v23.0',
+      });
+    };
+    if (!document.getElementById('facebook-jssdk')) {
+      const script = document.createElement('script');
+      script.id = 'facebook-jssdk';
+      script.src = 'https://connect.facebook.net/en_US/sdk.js';
+      script.async = true;
+      script.defer = true;
+      document.body.appendChild(script);
+    }
+  }, []);
+
+  const handleEmbeddedSignup = () => {
+    const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+    const configId = process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID;
+    const fb = (window as any).FB;
+    if (!appId || !configId) {
+      alert('Set NEXT_PUBLIC_META_APP_ID and NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID in Render, then redeploy.');
+      return;
+    }
+    if (!fb) {
+      alert('Meta login is still loading. Please try again in a moment.');
+      return;
+    }
+    setMetaConnecting(true);
+    let authCode = '';
+    let signupData: any = null;
+    let submitted = false;
+    const finish = async () => {
+      if (!authCode || !signupData || submitted) return;
+      submitted = true;
+      window.removeEventListener('message', onMessage);
+      try {
+        const response = await authenticatedFetch('/api/whatsapp/embedded-signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspaceId,
+            code: authCode,
+            phoneNumberId: signupData.phone_number_id,
+            wabaId: signupData.waba_id,
+          }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Meta Embedded Signup could not connect this WhatsApp account.');
+        alert('WhatsApp Business account connected and webhook subscription completed.');
+        onRefresh();
+      } catch (error: any) {
+        alert(error.message || 'WhatsApp Embedded Signup failed.');
+      } finally {
+        setMetaConnecting(false);
+      }
+    };
+    const onMessage = (event: MessageEvent) => {
+      if (!/^https:\/\/([a-z0-9-]+\\.)?facebook\\.com$/i.test(event.origin)) return;
+      let data: any = event.data;
+      if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch { return; }
+      }
+      if (data?.type !== 'WA_EMBEDDED_SIGNUP') return;
+      if (data.event === 'FINISH') {
+        signupData = data.data || {};
+        void finish();
+      } else if (data.event === 'CANCEL' || data.event === 'ERROR') {
+        window.removeEventListener('message', onMessage);
+        setMetaConnecting(false);
+        alert(data.data?.error_message || 'WhatsApp signup was cancelled in Meta.');
+      }
+    };
+    window.addEventListener('message', onMessage);
+    fb.login((response: any) => {
+      authCode = response?.authResponse?.code || '';
+      if (!authCode) {
+        window.removeEventListener('message', onMessage);
+        setMetaConnecting(false);
+        alert('Meta did not return an authorization code. Check your Embedded Signup configuration and permissions.');
+        return;
+      }
+      void finish();
+    }, {
+      config_id: configId,
+      response_type: 'code',
+      override_default_response_type: true,
+      extras: { setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3' },
+    });
+  };
 
   const safeChannels = Array.isArray(channels) ? channels : [];
   const waChannel = safeChannels.find((c: any) => c.type === 'whatsapp');
@@ -1409,6 +1506,13 @@ function ChannelsView({ channels, workspaceId, onRefresh }: any) {
           </span>
         </div>
 
+        <div className="mb-5 rounded-xl border border-emerald-500/20 bg-emerald-500/[.06] p-4">
+          <div className="text-xs font-bold text-emerald-300">Recommended: Official Meta Embedded Signup</div>
+          <p className="mt-1 text-[11px] leading-5 text-zinc-400">Customers connect their own WhatsApp Business account through Meta. Access tokens are exchanged and encrypted on the server.</p>
+          <button type="button" disabled={metaConnecting} onClick={handleEmbeddedSignup} className="mt-3 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50">
+            {metaConnecting ? 'Connecting with Meta…' : 'Continue with Meta'}
+          </button>
+        </div>
         <form onSubmit={handleConnectWhatsApp} className="space-y-4 max-w-xl">
           <div>
             <label className="text-xs font-semibold text-zinc-300 block mb-1">WhatsApp Phone Number ID</label>
@@ -1448,9 +1552,9 @@ function ChannelsView({ channels, workspaceId, onRefresh }: any) {
                 <p className="text-xs text-zinc-400">Automate Instagram DMs.</p>
               </div>
             </div>
-            <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">Ready</span>
+            <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">Setup required</span>
           </div>
-          <button onClick={() => alert('Instagram Professional Account OAuth ready.')} className="px-4 py-2 bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold rounded-xl transition">
+          <button onClick={() => alert('Instagram Messaging OAuth is not enabled in this deployment yet. Configure the Meta app Instagram permissions before connecting.')} className="px-4 py-2 bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold rounded-xl transition">
             Connect Instagram Account
           </button>
         </div>
@@ -1468,7 +1572,7 @@ function ChannelsView({ channels, workspaceId, onRefresh }: any) {
             </div>
             <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">Ready</span>
           </div>
-          <button onClick={() => alert('Facebook Page OAuth ready.')} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition">
+          <button onClick={() => alert('Messenger Page OAuth is not enabled in this deployment yet. Configure the Meta app Messenger permissions before connecting.')} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition">
             Connect Facebook Page
           </button>
         </div>
