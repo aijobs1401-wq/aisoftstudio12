@@ -702,7 +702,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
     if (error) throw new Error(error.message);
     const adminDb = serviceClient();
     const { error: secretError } = await adminDb.from('whatsapp_connection_secrets').upsert({
-      connection_id: connection.id, token_ciphertext, token_key_version: 1, updated_at: new Date().toISOString(),
+      connection_id: connection.id, token_ciphertext: tokenCiphertext, token_key_version: 1, updated_at: new Date().toISOString(),
       token_expires_at: tokenData.expires_in ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString() : null,
     });
     if (secretError) throw new Error(secretError.message);
