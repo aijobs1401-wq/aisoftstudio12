@@ -23,13 +23,14 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
   const [token, setToken] = useState<string>('');
   const [activeRoute, setActiveRoute] = useState<string>('home'); // home, features, pricing, login, register, forgot, privacy, terms, dashboard
-  const [activeTab, setActiveTab] = useState<string>('overview'); // overview, studio, inbox, leads, channels, api, billing, admin
+  const [activeTab, setActiveTab] = useState<string>('overview'); // overview, studio, inbox, leads, channels, automations, api, billing, admin
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>('ws_1');
   const [bots, setBots] = useState<any[]>([]);
   const [conversations, setConversations] = useState<any[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
   const [channels, setChannels] = useState<any[]>([]);
+  const [automations, setAutomations] = useState<any[]>([]);
   const [apiKeys, setApiKeys] = useState<any[]>([]);
   const [subscription, setSubscription] = useState<any>(null);
   const [adminData, setAdminData] = useState<any>(null);
@@ -153,12 +154,13 @@ export default function App() {
 
   const loadWorkspaceData = async (wsId: string) => {
     try {
-      const [wsRes, botsRes, convsRes, leadsRes, chansRes, keysRes, subRes] = await Promise.all([
+      const [wsRes, botsRes, convsRes, leadsRes, chansRes, autoRes, keysRes, subRes] = await Promise.all([
         authenticatedFetch('/api/workspaces').then(r => r.json()),
         authenticatedFetch(`/api/bots?workspaceId=${wsId}`).then(r => r.json()),
         authenticatedFetch(`/api/conversations?workspaceId=${wsId}`).then(r => r.json()),
         authenticatedFetch(`/api/leads?workspaceId=${wsId}`).then(r => r.json()),
         authenticatedFetch(`/api/channels?workspaceId=${wsId}`).then(r => r.json()),
+        authenticatedFetch(`/api/automations?workspaceId=${wsId}`).then(r => r.json()),
         authenticatedFetch(`/api/apikeys?workspaceId=${wsId}`).then(r => r.json()),
         authenticatedFetch(`/api/subscription?workspaceId=${wsId}`).then(r => r.json()),
       ]);
@@ -171,6 +173,7 @@ export default function App() {
       setConversations(convsRes);
       setLeads(leadsRes);
       setChannels(chansRes);
+      setAutomations(autoRes);
       setApiKeys(keysRes);
       setSubscription(subRes);
 
@@ -258,6 +261,7 @@ export default function App() {
             <NavItem icon={<Users className="w-4 h-4" />} label="Live Inbox & Handover" active={activeTab === 'inbox'} count={conversations.filter(c => c.status === 'human_handover').length} onClick={() => setActiveTab('inbox')} />
             <NavItem icon={<Database className="w-4 h-4" />} label="Leads & Customers" active={activeTab === 'leads'} count={leads.length} onClick={() => setActiveTab('leads')} />
             <NavItem icon={<Globe className="w-4 h-4" />} label="Channels (WA, IG, FB)" active={activeTab === 'channels'} onClick={() => setActiveTab('channels')} />
+            <NavItem icon={<Zap className="w-4 h-4" />} label="Automation Workflows" active={activeTab === 'automations'} onClick={() => setActiveTab('automations')} />
             <NavItem icon={<Key className="w-4 h-4" />} label="API & Widget Embed" active={activeTab === 'api'} onClick={() => setActiveTab('api')} />
             <NavItem icon={<CreditCard className="w-4 h-4" />} label="Subscription & Limits" active={activeTab === 'billing'} onClick={() => setActiveTab('billing')} />
             {['master_admin', 'admin'].includes(user?.role) && (
@@ -321,6 +325,7 @@ export default function App() {
               {activeTab === 'inbox' && 'Live Inbox & Human Handover'}
               {activeTab === 'leads' && 'Customer Leads & Inquiries'}
               {activeTab === 'channels' && 'WhatsApp, Instagram & Messenger Integrations'}
+              {activeTab === 'automations' && 'No-Code Automation Workflows'}
               {activeTab === 'api' && 'API Keys & Website Widget Setup'}
               {activeTab === 'billing' && 'Subscription Plans & Usage Limits'}
               {activeTab === 'admin' && 'Master Admin Control Panel'}
@@ -386,6 +391,10 @@ export default function App() {
 
           {activeTab === 'channels' && (
             <ChannelsView channels={channels} workspaceId={selectedWorkspace} onRefresh={() => loadWorkspaceData(selectedWorkspace)} />
+          )}
+
+          {activeTab === 'automations' && (
+            <AutomationStudio automations={automations} workspaceId={selectedWorkspace} onRefresh={() => loadWorkspaceData(selectedWorkspace)} />
           )}
 
           {activeTab === 'api' && (
@@ -1325,6 +1334,89 @@ function LiveInbox({ conversations, workspaceId, onRefresh }: any) {
 // -------------------------------------------------------------------------
 // LEADS VIEW
 // -------------------------------------------------------------------------
+function AutomationStudio({ automations, workspaceId, onRefresh }: any) {
+  const [name, setName] = useState('');
+  const [triggerType, setTriggerType] = useState('incoming_message');
+  const [keyword, setKeyword] = useState('');
+  const [replyText, setReplyText] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const createFlow = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!name.trim() || !replyText.trim()) return;
+    setSaving(true);
+    try {
+      const response = await authenticatedFetch('/api/automations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspaceId, name, triggerType,
+          definition: { keyword: keyword.trim(), actions: [{ type: 'send_reply', text: replyText.trim() }] },
+          status: 'active',
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Could not create workflow.');
+      setName('');
+      setKeyword('');
+      setReplyText('');
+      onRefresh();
+    } catch (error: any) {
+      alert(error.message || 'Automation could not be saved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleFlow = async (flow: any) => {
+    const response = await authenticatedFetch(`/api/automations/${flow.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: flow.status === 'active' ? 'paused' : 'active' }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) alert(result.error || 'Could not update workflow.');
+    else onRefresh();
+  };
+
+  const deleteFlow = async (id: string) => {
+    if (!window.confirm('Delete this automation workflow?')) return;
+    const response = await authenticatedFetch(`/api/automations/${id}`, { method: 'DELETE' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) alert(result.error || 'Could not delete workflow.');
+    else onRefresh();
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+        <div className="mb-5 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-orange-500/20 bg-orange-500/10 text-orange-400"><Zap className="h-5 w-5" /></div>
+          <div><h3 className="text-sm font-bold text-white">No-code automation builder</h3><p className="mt-1 text-xs text-zinc-400">Create WhatsApp reply workflows that run when an incoming message matches the trigger.</p></div>
+        </div>
+        <form onSubmit={createFlow} className="grid gap-4 md:grid-cols-2">
+          <div><label className="mb-1 block text-xs font-semibold text-zinc-300">Workflow name</label><input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Business hours auto reply" className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-xs text-white outline-none focus:border-orange-500" required /></div>
+          <div><label className="mb-1 block text-xs font-semibold text-zinc-300">Trigger</label><select value={triggerType} onChange={e => setTriggerType(e.target.value)} className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-xs text-white outline-none focus:border-orange-500"><option value="incoming_message">Every incoming message</option><option value="keyword_match">Specific keyword</option></select></div>
+          {triggerType === 'keyword_match' && <div><label className="mb-1 block text-xs font-semibold text-zinc-300">Keyword</label><input value={keyword} onChange={e => setKeyword(e.target.value)} placeholder="price, delivery, support..." className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-xs text-white outline-none focus:border-orange-500" required /></div>}
+          <div className={triggerType === 'keyword_match' ? '' : 'md:col-span-2'}><label className="mb-1 block text-xs font-semibold text-zinc-300">Automatic reply</label><textarea value={replyText} onChange={e => setReplyText(e.target.value)} placeholder="Write the message the customer should receive..." rows={3} className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-xs text-white outline-none focus:border-orange-500" required /></div>
+          <div className="md:col-span-2"><button disabled={saving} className="rounded-xl bg-orange-600 px-5 py-2.5 text-xs font-bold text-white transition hover:bg-orange-500 disabled:opacity-50">{saving ? 'Saving workflow…' : 'Create automation'}</button></div>
+        </form>
+      </div>
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+        <h3 className="mb-4 text-sm font-bold text-white">Your workflows <span className="ml-2 text-xs font-normal text-zinc-500">{Array.isArray(automations) ? automations.length : 0} total</span></h3>
+        <div className="space-y-3">
+          {Array.isArray(automations) && automations.length ? automations.map((flow: any) => (
+            <div key={flow.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+              <div><div className="text-xs font-bold text-white">{flow.name}</div><div className="mt-1 text-[10px] text-zinc-500">{flow.triggerType === 'keyword_match' ? `Keyword: ${flow.definition?.keyword || '—'}` : 'Every incoming message'} · Created {new Date(flow.createdAt).toLocaleDateString()}</div></div>
+              <div className="flex items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${flow.status === 'active' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-800 text-zinc-400'}`}>{flow.status}</span><button onClick={() => toggleFlow(flow)} className="rounded-lg border border-zinc-700 px-3 py-1.5 text-[10px] font-semibold text-zinc-300 hover:border-orange-500/40">{flow.status === 'active' ? 'Pause' : 'Activate'}</button><button onClick={() => deleteFlow(flow.id)} className="rounded-lg p-1.5 text-zinc-500 hover:text-red-400"><Trash2 className="h-4 w-4" /></button></div>
+            </div>
+          )) : <div className="rounded-xl border border-dashed border-zinc-800 p-8 text-center text-xs text-zinc-500">No workflows yet. Create your first automated reply above.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LeadsView({ leads }: any) {
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
