@@ -39,6 +39,7 @@
   "exclude": [
     "node_modules",
     "server.ts",
-    "src/main.tsx"
+    "src/main.tsx",
+    "vite.config.ts"
   ]
 }
