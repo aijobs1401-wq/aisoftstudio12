@@ -4,7 +4,7 @@ import {
   Plus, Settings, Send, Copy, Check, QrCode, Phone, Share2, RefreshCw, 
   ExternalLink, LogOut, Sparkles, AlertCircle, CheckCircle2, ChevronRight,
   HelpCircle, Trash2, Edit3, Eye, Smartphone, Laptop, Search, Lock,
-  Menu, X, ArrowRight, ShieldCheck, Zap, Code, Terminal, Instagram, Facebook
+  Menu, X, ArrowRight, ShieldCheck, Zap, Code, Terminal, Camera as Instagram, MessageCircle as Facebook
 } from 'lucide-react';
 
 export default function App() {
