@@ -1,10 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || 'https://jkufkafmkgfshbvfsapr.supabase.co';
-const supabasePublishableKey = import.meta.env.SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImprdWZrYWZta2dmc2hidmZzYXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDAxNzg2MDAsImV4cCI6MjA1NTc1NDYwMH0.mock_key_for_build';
+// Next.js exposes browser-safe environment variables through process.env
+// only when their names start with NEXT_PUBLIC_.
+const supabaseUrl =
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  'https://jkufkafmkgfshbvfsapr.supabase.co';
+
+const supabasePublishableKey =
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdWIiLCJyZWYiOiJqa3Vma2FmaW1rZ2ZzaGJ2ZnNhcHIiLCJyb2xlIjoiYW5vbiJ9.mock_key_for_build';
 
 if (!supabaseUrl || !supabasePublishableKey) {
-  console.warn('Missing SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY environment variables.');
+  console.warn(
+    'Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.',
+  );
 }
 
 export const supabase = createClient(supabaseUrl, supabasePublishableKey);
