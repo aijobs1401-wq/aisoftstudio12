@@ -478,6 +478,55 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
       displayPhoneNumber: channel.display_phone_number, name: channel.verified_name, createdAt: channel.created_at,
     })));
   }
+  if (route === 'whatsapp/embedded-signup' && method === 'POST') {
+    const appId = process.env.META_APP_ID || '';
+    const appSecret = process.env.META_APP_SECRET || '';
+    const code = String((body as any).code || '').trim();
+    const phoneNumberId = String((body as any).phoneNumberId || '').trim();
+    const wabaId = String((body as any).wabaId || '').trim();
+    if (!appId || !appSecret) return json({ error: 'META_APP_ID and META_APP_SECRET must be configured on the server.' }, 503);
+    if (!code || !phoneNumberId || !wabaId) return json({ error: 'Embedded Signup code, Phone Number ID and WABA ID are required.' }, 400);
+    const version = process.env.META_GRAPH_API_VERSION || 'v23.0';
+    const tokenUrl = new URL(`https://graph.facebook.com/${version}/oauth/access_token`);
+    tokenUrl.searchParams.set('client_id', appId);
+    tokenUrl.searchParams.set('client_secret', appSecret);
+    tokenUrl.searchParams.set('code', code);
+    const tokenResponse = await fetch(tokenUrl);
+    const tokenData = await tokenResponse.json().catch(() => ({}));
+    if (!tokenResponse.ok || !tokenData.access_token) return json({ error: tokenData.error?.message || 'Meta authorization code exchange failed.' }, 400);
+    const accessToken = String(tokenData.access_token);
+    const phoneResponse = await fetch(`https://graph.facebook.com/${version}/${encodeURIComponent(phoneNumberId)}?fields=display_phone_number,verified_name,whatsapp_business_account`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const phoneData = await phoneResponse.json().catch(() => ({}));
+    if (!phoneResponse.ok) return json({ error: phoneData.error?.message || 'Meta could not verify the selected WhatsApp number.' }, 400);
+    if (phoneData.whatsapp_business_account?.id && phoneData.whatsapp_business_account.id !== wabaId) {
+      return json({ error: 'The selected Phone Number ID does not belong to the WABA returned by Embedded Signup.' }, 400);
+    }
+    const subscribeResponse = await fetch(`https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}/subscribed_apps`, {
+      method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    });
+    const subscribeData = await subscribeResponse.json().catch(() => ({}));
+    if (!subscribeResponse.ok) return json({ error: subscribeData.error?.message || 'Could not subscribe the Meta app to this WABA webhook.' }, 400);
+    let tokenCiphertext: string;
+    try { tokenCiphertext = encryptToken(accessToken); }
+    catch (error: any) { return json({ error: error.message }, 503); }
+    const { data: connection, error } = await client.from('whatsapp_connections').upsert({
+      organization_id: orgId, phone_number_id: phoneNumberId, waba_id: wabaId,
+      display_phone_number: phoneData.display_phone_number || null,
+      verified_name: phoneData.verified_name || null, connection_status: 'connected', updated_at: new Date().toISOString(),
+    }, { onConflict: 'phone_number_id' }).select('*').single();
+    if (error) throw new Error(error.message);
+    const adminDb = serviceClient();
+    const { error: secretError } = await adminDb.from('whatsapp_connection_secrets').upsert({
+      connection_id: connection.id, token_ciphertext, token_key_version: 1, updated_at: new Date().toISOString(),
+      token_expires_at: tokenData.expires_in ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString() : null,
+    });
+    if (secretError) throw new Error(secretError.message);
+    await adminDb.from('whatsapp_ai_settings').upsert({ organization_id: orgId, enabled: true, bot_name: 'AI Soft Studio Assistant', updated_by: ctx.user.id, updated_at: new Date().toISOString() }, { onConflict: 'organization_id' });
+    return json({ id: connection.id, type: 'whatsapp', status: 'connected', displayPhoneNumber: connection.display_phone_number });
+  }
+
   if (route === 'channels/whatsapp' && method === 'POST') {
     const phoneNumberId = String((body as any).phoneNumberId || '').trim();
     const accessToken = String((body as any).accessToken || '').trim();
