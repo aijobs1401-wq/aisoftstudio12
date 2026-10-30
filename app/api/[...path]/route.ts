@@ -784,6 +784,49 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
     return json({ orderId: order.id, amount: order.amount, currency: order.currency, keyId });
   }
 
+  if (route === 'admin/integrations' && method === 'GET') {
+    await requireAdmin(ctx);
+    const configured = (key: string) => Boolean(process.env[key]?.trim());
+    return json({
+      webhookBaseUrl: process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || '',
+      integrations: {
+        openai: { configured: configured('OPENAI_API_KEY'), model: process.env.OPENAI_MODEL || 'gpt-4o-mini' },
+        meta: { configured: configured('META_APP_ID') && configured('META_APP_SECRET') && configured('META_EMBEDDED_SIGNUP_CONFIG_ID'), appIdConfigured: configured('META_APP_ID'), appSecretConfigured: configured('META_APP_SECRET'), signupConfigConfigured: configured('META_EMBEDDED_SIGNUP_CONFIG_ID'), webhookVerifyConfigured: configured('META_WEBHOOK_VERIFY_TOKEN'), encryptionConfigured: (() => { try { encryptionKey(); return true; } catch { return false; } })() },
+        razorpay: { configured: configured('RAZORPAY_KEY_ID') && configured('RAZORPAY_KEY_SECRET'), webhookConfigured: configured('RAZORPAY_WEBHOOK_SECRET') },
+      },
+      webhookUrls: {
+        whatsapp: (process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://YOUR-RENDER-SERVICE.onrender.com') + '/api/whatsapp/webhook',
+        razorpay: (process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://YOUR-RENDER-SERVICE.onrender.com') + '/api/webhooks/payment',
+      },
+    });
+  }
+  if (route === 'admin/integrations/test' && method === 'POST') {
+    await requireAdmin(ctx);
+    const provider = String((body as any).provider || '');
+    if (provider === 'openai') {
+      const key = process.env.OPENAI_API_KEY || '';
+      if (!key) return json({ ok: false, error: 'OPENAI_API_KEY is missing in Render environment variables.' }, 503);
+      const response = await fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${key}` } });
+      const data = await response.json().catch(() => ({}));
+      return response.ok ? json({ ok: true, message: 'OpenAI API key accepted.', model: process.env.OPENAI_MODEL || 'gpt-4o-mini' }) : json({ ok: false, error: data.error?.message || 'OpenAI rejected the API key.' }, 400);
+    }
+    if (provider === 'meta') {
+      const appId = process.env.META_APP_ID || '', secret = process.env.META_APP_SECRET || '';
+      if (!appId || !secret) return json({ ok: false, error: 'META_APP_ID or META_APP_SECRET is missing in Render.' }, 503);
+      const version = process.env.META_GRAPH_API_VERSION || 'v23.0';
+      const response = await fetch(`https://graph.facebook.com/${version}/${encodeURIComponent(appId)}?fields=id,name`, { headers: { Authorization: 'Bearer ' + appId + '|' + secret } });
+      const data = await response.json().catch(() => ({}));
+      return response.ok ? json({ ok: true, message: 'Meta app credentials accepted.', appName: data.name || appId }) : json({ ok: false, error: data.error?.message || 'Meta rejected the app credentials.' }, 400);
+    }
+    if (provider === 'razorpay') {
+      const id = process.env.RAZORPAY_KEY_ID || '', secret = process.env.RAZORPAY_KEY_SECRET || '';
+      if (!id || !secret) return json({ ok: false, error: 'RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET is missing in Render.' }, 503);
+      const response = await fetch('https://api.razorpay.com/v1/orders?count=1', { headers: { Authorization: 'Basic ' + Buffer.from(id + ':' + secret).toString('base64') } });
+      const data = await response.json().catch(() => ({}));
+      return response.ok ? json({ ok: true, message: 'Razorpay credentials accepted.' }) : json({ ok: false, error: data.error?.description || 'Razorpay rejected the credentials.' }, 400);
+    }
+    return json({ ok: false, error: 'Unknown integration provider.' }, 400);
+  }
   if (route === 'admin/overview' && method === 'GET') {
     const adminDb = await requireAdmin(ctx);
     const [{ data: authUsers }, { data: profiles }, { data: orgs }, { data: bots }, { data: channels }, { data: plans }, { data: payments }, { data: logs }, { data: subscriptions }, { count: conversationCount }] = await Promise.all([
