@@ -1,6 +1,6 @@
 # Changelog
 
-User-visible changes in `wacrm`. Self-hosters: when pulling an update,
+User-visible changes in `Ai Soft`. Self-hosters: when pulling an update,
 check this file for any **migration required** notes and apply the
 matching SQL files from `supabase/migrations/` against your Supabase
 project before restarting the app.
@@ -11,7 +11,7 @@ and polish.
 
 ## [Unreleased]
 
-Multi-user accounts ship. Every wacrm install is multi-tenant on the
+Multi-user accounts ship. Every Ai Soft install is multi-tenant on the
 database side: a single user's signup creates a fresh "account", and
 every row is scoped to that account rather than to the user directly.
 This release also opens the user-visible **Members** surface — invite
@@ -286,7 +286,7 @@ Apply against your Supabase project before deploying this version:
 
 ### Note on multi-user setups
 
-wacrm is intentionally **single-tenant per WhatsApp number**. RLS on
+Ai Soft is intentionally **single-tenant per WhatsApp number**. RLS on
 `conversations`/`messages` is `auth.uid() = user_id`, so a second
 user physically cannot read messages routed to a different owner —
 two users sharing one number was never supported. If you need
