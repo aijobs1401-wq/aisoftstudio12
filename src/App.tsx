@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { supabase } from './lib/supabaseClient';
 import { 
   Bot, MessageSquare, Users, Database, Globe, Key, CreditCard, ShieldAlert, 
   Plus, Settings, Send, Copy, Check, QrCode, Phone, Share2, RefreshCw, 
@@ -35,6 +36,7 @@ export default function App() {
   const [authName, setAuthName] = useState('');
   const [authBusiness, setAuthBusiness] = useState('');
   const [onboardingStep, setOnboardingStep] = useState(1);
+  const [authMessage, setAuthMessage] = useState('');
 
   // Check URL path on mount
   useEffect(() => {
@@ -49,25 +51,85 @@ export default function App() {
     }
   }, []);
 
-  const login = async (email: string) => {
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
-      const data = await res.json();
-      if (data.user) {
-        setUser(data.user);
-        setToken(data.token);
-        setSelectedWorkspace(data.user.workspaceId);
-        loadWorkspaceData(data.user.workspaceId);
-        setActiveRoute('dashboard');
-      } else {
-        alert(data.error || 'Login failed');
+  const applyAuthenticatedUser = async (authUser: any) => {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id,email,full_name,display_name,role')
+      .eq('id', authUser.id)
+      .maybeSingle();
+
+    const appUser = {
+      id: authUser.id,
+      email: authUser.email || '',
+      name: profile?.full_name || profile?.display_name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User',
+      role: profile?.role || 'viewer',
+      workspaceId: authUser.id,
+    };
+    setUser(appUser);
+    setToken(authUser.id);
+    setSelectedWorkspace(appUser.workspaceId);
+    setActiveRoute('dashboard');
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!mounted || error || !data.session?.user) return;
+      void applyAuthenticatedUser(data.session.user);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      if (!session?.user) {
+        setUser(null);
+        setToken('');
       }
-    } catch (err) {
-      console.error('Login error:', err);
+    });
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const login = async (email: string, password: string) => {
+    setAuthMessage('');
+    if (!email.trim() || !password) {
+      setAuthMessage('Email aur password dono enter karein.');
+      return;
+    }
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    if (error) {
+      setAuthMessage(error.message);
+      return;
+    }
+    if (data.user) await applyAuthenticatedUser(data.user);
+  };
+
+  const register = async (email: string, password: string, fullName: string, businessName: string) => {
+    setAuthMessage('');
+    if (!fullName.trim() || !businessName.trim() || !email.trim() || password.length < 8) {
+      setAuthMessage('Name, business, valid email aur kam se kam 8-character password enter karein.');
+      return;
+    }
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: {
+        data: { full_name: fullName.trim(), business_name: businessName.trim() },
+        emailRedirectTo: window.location.origin,
+      },
+    });
+    if (error) {
+      setAuthMessage(error.message);
+      return;
+    }
+    if (data.session?.user) {
+      await applyAuthenticatedUser(data.session.user);
+    } else {
+      setAuthMessage('Account create ho gaya. Apna email inbox check karke verification link confirm karein, phir sign in karein.');
+      setActiveRoute('login');
     }
   };
 
@@ -119,6 +181,8 @@ export default function App() {
         authName={authName} setAuthName={setAuthName}
         authBusiness={authBusiness} setAuthBusiness={setAuthBusiness}
         onLogin={login}
+        onRegister={register}
+        authMessage={authMessage}
       />
     );
   }
@@ -187,7 +251,9 @@ export default function App() {
             </div>
             <button
               onClick={() => {
+                void supabase.auth.signOut();
                 setUser(null);
+                setToken('');
                 setActiveRoute('home');
               }}
               title="Sign Out"
@@ -321,7 +387,7 @@ function NavItem({ icon, label, active, count, onClick }: any) {
 // -------------------------------------------------------------------------
 // PUBLIC MARKETING WEBSITE
 // -------------------------------------------------------------------------
-function PublicWebsite({ activeRoute, setActiveRoute, authEmail, setAuthEmail, authPassword, setAuthPassword, authName, setAuthName, authBusiness, setAuthBusiness, onLogin }: any) {
+function PublicWebsite({ activeRoute, setActiveRoute, authEmail, setAuthEmail, authPassword, setAuthPassword, authName, setAuthName, authBusiness, setAuthBusiness, onLogin, onRegister, authMessage }: any) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
@@ -383,8 +449,8 @@ function PublicWebsite({ activeRoute, setActiveRoute, authEmail, setAuthEmail, a
         {activeRoute === 'pricing' && <PricingView setActiveRoute={setActiveRoute} onLogin={onLogin} />}
         {activeRoute === 'privacy' && <PrivacyView />}
         {activeRoute === 'terms' && <TermsView />}
-        {activeRoute === 'login' && <LoginView setActiveRoute={setActiveRoute} onLogin={onLogin} authEmail={authEmail} setAuthEmail={setAuthEmail} authPassword={authPassword} setAuthPassword={setAuthPassword} />}
-        {activeRoute === 'register' && <RegisterView setActiveRoute={setActiveRoute} onLogin={onLogin} authEmail={authEmail} setAuthEmail={setAuthEmail} authPassword={authPassword} setAuthPassword={setAuthPassword} authName={authName} setAuthName={setAuthName} authBusiness={authBusiness} setAuthBusiness={setAuthBusiness} />}
+        {activeRoute === 'login' && <LoginView setActiveRoute={setActiveRoute} onLogin={onLogin} authEmail={authEmail} setAuthEmail={setAuthEmail} authPassword={authPassword} setAuthPassword={setAuthPassword} authMessage={authMessage} />}
+        {activeRoute === 'register' && <RegisterView setActiveRoute={setActiveRoute} onRegister={onRegister} authEmail={authEmail} setAuthEmail={setAuthEmail} authPassword={authPassword} setAuthPassword={setAuthPassword} authName={authName} setAuthName={setAuthName} authBusiness={authBusiness} setAuthBusiness={setAuthBusiness} authMessage={authMessage} />}
         {activeRoute === 'forgot' && <ForgotPasswordView setActiveRoute={setActiveRoute} />}
       </div>
 
@@ -582,7 +648,7 @@ function TermsView() {
   );
 }
 
-function LoginView({ setActiveRoute, onLogin, authEmail, setAuthEmail, authPassword, setAuthPassword }: any) {
+function LoginView({ setActiveRoute, onLogin, authEmail, setAuthEmail, authPassword, setAuthPassword, authMessage }: any) {
   return (
     <div className="max-w-md mx-auto px-6 py-16">
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 shadow-2xl space-y-6">
@@ -593,33 +659,24 @@ function LoginView({ setActiveRoute, onLogin, authEmail, setAuthEmail, authPassw
         <div className="space-y-4">
           <div>
             <label className="text-xs font-semibold text-zinc-300 block mb-1">Email Address</label>
-            <input
-              type="email"
-              placeholder="owner@mybusiness.com"
-              value={authEmail}
+            <input type="email" autoComplete="email" placeholder="you@business.com" value={authEmail}
               onChange={e => setAuthEmail(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500"
-            />
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500" />
           </div>
           <div>
             <label className="text-xs font-semibold text-zinc-300 block mb-1">Password</label>
-            <input
-              type="password"
-              placeholder="••••••••"
-              value={authPassword}
+            <input type="password" autoComplete="current-password" placeholder="Enter your password" value={authPassword}
               onChange={e => setAuthPassword(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500"
-            />
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500" />
           </div>
-          <button
-            onClick={() => onLogin(authEmail || 'owner@mybusiness.com')}
-            className="w-full py-3 bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-orange-600/20"
-          >
+          {authMessage && <p role="alert" className="text-xs text-amber-400">{authMessage}</p>}
+          <button onClick={() => onLogin(authEmail, authPassword)}
+            className="w-full py-3 bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-orange-600/20">
             Sign In
           </button>
           <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-2">
-            <button onClick={() => onLogin('owner@mybusiness.com')} className="text-orange-400 hover:underline">Demo Business Login</button>
-            <button onClick={() => onLogin('admin@aisoftstudio.com')} className="text-amber-400 hover:underline">Master Admin Login</button>
+            <button onClick={() => setActiveRoute('forgot')} className="text-orange-400 hover:underline">Forgot password?</button>
+            <button onClick={() => setActiveRoute('register')} className="text-orange-400 hover:underline">Create account</button>
           </div>
         </div>
       </div>
@@ -627,61 +684,45 @@ function LoginView({ setActiveRoute, onLogin, authEmail, setAuthEmail, authPassw
   );
 }
 
-function RegisterView({ setActiveRoute, onLogin, authEmail, setAuthEmail, authPassword, setAuthPassword, authName, setAuthName, authBusiness, setAuthBusiness }: any) {
+function RegisterView({ setActiveRoute, onRegister, authEmail, setAuthEmail, authPassword, setAuthPassword, authName, setAuthName, authBusiness, setAuthBusiness, authMessage }: any) {
   return (
     <div className="max-w-md mx-auto px-6 py-16">
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 shadow-2xl space-y-6">
         <div>
           <h2 className="text-2xl font-black text-white mb-1">Create Account</h2>
-          <p className="text-xs text-zinc-400">Get started with your AI Soft Studio workspace.</p>
+          <p className="text-xs text-zinc-400">Create your secure AI Soft Studio workspace.</p>
         </div>
         <div className="space-y-4">
           <div>
             <label className="text-xs font-semibold text-zinc-300 block mb-1">Full Name</label>
-            <input
-              type="text"
-              placeholder="Rahul Sharma"
-              value={authName}
+            <input type="text" autoComplete="name" placeholder="Your full name" value={authName}
               onChange={e => setAuthName(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500"
-            />
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500" />
           </div>
           <div>
             <label className="text-xs font-semibold text-zinc-300 block mb-1">Business Name</label>
-            <input
-              type="text"
-              placeholder="Sharma Electronics"
-              value={authBusiness}
+            <input type="text" placeholder="Your business name" value={authBusiness}
               onChange={e => setAuthBusiness(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500"
-            />
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500" />
           </div>
           <div>
             <label className="text-xs font-semibold text-zinc-300 block mb-1">Email Address</label>
-            <input
-              type="email"
-              placeholder="owner@mybusiness.com"
-              value={authEmail}
+            <input type="email" autoComplete="email" placeholder="you@business.com" value={authEmail}
               onChange={e => setAuthEmail(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500"
-            />
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500" />
           </div>
           <div>
-            <label className="text-xs font-semibold text-zinc-300 block mb-1">Password</label>
-            <input
-              type="password"
-              placeholder="••••••••"
-              value={authPassword}
+            <label className="text-xs font-semibold text-zinc-300 block mb-1">Password (minimum 8 characters)</label>
+            <input type="password" autoComplete="new-password" placeholder="Create a password" value={authPassword}
               onChange={e => setAuthPassword(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500"
-            />
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-orange-500" />
           </div>
-          <button
-            onClick={() => onLogin(authEmail || 'owner@mybusiness.com')}
-            className="w-full py-3 bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-orange-600/20"
-          >
-            Create Workspace & Start
+          {authMessage && <p role="alert" className="text-xs text-amber-400">{authMessage}</p>}
+          <button onClick={() => onRegister(authEmail, authPassword, authName, authBusiness)}
+            className="w-full py-3 bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-orange-600/20">
+            Create Account
           </button>
+          <p className="text-center text-xs text-zinc-400">Already registered? <button onClick={() => setActiveRoute('login')} className="text-orange-400 hover:underline">Sign in</button></p>
         </div>
       </div>
     </div>
