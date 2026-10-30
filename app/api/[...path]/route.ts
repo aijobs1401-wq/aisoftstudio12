@@ -47,7 +47,7 @@ function botShape(bot: any) {
 async function contextFor(request: NextRequest): Promise<ApiContext> {
   if (!supabaseUrl || !publicKey) throw new Error('Supabase URL or publishable key is missing on the server.');
   const bearer = request.headers.get('authorization') || '';
-  const accessToken = bearer.replace(/^Bearer\\s+/i, '');
+  const accessToken = bearer.replace(/^Bearer\s+/i, '');
   if (!accessToken) throw new Error('Sign in is required.');
   const client = createClient(supabaseUrl, publicKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -381,7 +381,7 @@ async function handle(request: NextRequest, params: Promise<{ path: string[] }>)
   }
 
   if (route === 'v1/chat/completions' && method === 'POST') {
-    const rawKey = (request.headers.get('authorization') || '').replace(/^Bearer\\s+/i, '');
+    const rawKey = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
     if (!rawKey.startsWith('ass_live_')) return json({ error: { message: 'A valid AI Soft Studio API key is required.' } }, 401);
     const adminDb = serviceClient();
     const keyHash = createHash('sha256').update(rawKey).digest('hex');
